@@ -15,8 +15,19 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 - **Access (2026-11-10, Chris):** Flasher keeps its own repos and People list ("one tool, one data
   repo set"), not tied to Signoff PL. FTEs see everything; clients and contractors see the projects
   shared with them, each in `review-flasher-<project>` (README, *Access*; `assets/access.js`). Tried
-  against `tests/fakegithub.js` and in the page with a fake GitHub; no real share yet. The live
-  manifest has no `projects` map until the next publish (its dry run adds the project).
+  against `tests/fakegithub.js` and in the page with a fake GitHub; the client project was shared
+  under its board id, so the firmware repo's `flasher.json` uses that as its project id (another id
+  would publish a second copy into `flasher_data`). Republished in place 2026-11-10 with the
+  project name in the manifest.
+- **Bootloader hang (2026-11-10):** about 1 restart in 20 left the client board in the ROM
+  bootloader with USB up but never enumerated (the host missed the reset's brief disconnect). Fixed
+  in that board's package (it drops off USB for 250 ms before resetting; see the firmware repo's
+  CLAUDE.md), 150 hammer-test flashes clean. A J-Link toggling `USB->BCDR` DPPU recovers a board
+  stuck that way. Flasher remembers
+  that a board's update mode has been opened in this browser (`flasher.v1.dfuOk.<vid>:<pid>`), so
+  when a restart doesn't bring it back within 6 s it says "The board didn't come back" (press
+  reset) instead of offering the picker; without that memory it can't tell a missing board from
+  one Chrome hasn't been allowed to see yet.
 - **Layout like Signoff EE (2026-11-10, Chris):** a sticky header with Open a .bin file on the right;
   the sidebar lists firmware grouped by project in folding groups, with a search; the Dovetail Signoff
   links fold to icons (`setupToolsFold`, copied from EE's `app.js`; keep it in step).

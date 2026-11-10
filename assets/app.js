@@ -431,6 +431,7 @@
     var closing = closeConsole();
     S.con = null; S.tab = 'flash';
     upd();
+    var touched = false;
     closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
       if (dev) { log('Found the board already in update mode (' + dev.productName + ').'); return dev; }
       if (S.skipTouch || !b.run || (!DEMO && !navigator.serial)) return null;
@@ -438,21 +439,31 @@
         if (!port) { log('No running board picked; looking for one already in update mode.'); return null; }
         log('Restarting the board into its bootloader (' + b.touchBaud + '-baud touch)…');
         return FL.serial.touch(port, { baud: b.touchBaud }).then(function () {
+          touched = true;
           if (DEMO) setTimeout(function () { demoBoard.running = false; }, 700);
           log('Waiting for the board to come back in update mode…');
           return waitDfu(b, 6000);
         });
       });
     }).then(function (dev) {
+      // This browser has opened the board's update mode before, so it would have been found by
+      // now: the board restarted but never came back on USB.
+      if (!dev && touched && dfuKnown(b)) throw Object.assign(new Error('The board restarted but didn’t come back in update mode.'), { code: 'gone' });
       S.run.step = 'write';
       if (dev) return writeTo(dev, c);
-      return askForDfu(c, true);
+      return askForDfu(c, true, touched);
     }).catch(function (e) { stopWith(e, c); });
   }
 
   // The DFU device picker. Called from the Flash click (which may no longer count as a click by
   // the time we get here) or from "Pick DFU in FS Mode" (a fresh one).
-  function askForDfu(c, first) {
+  // Whether this browser has opened this board's update mode before (it then needs no picker, so a
+  // board that doesn't show up within the wait isn't there).
+  function dfuKeyOf(b) { return (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'dfuOk.' + b.dfu.vid + ':' + b.dfu.pid; }
+  function dfuKnown(b) { try { return localStorage.getItem(dfuKeyOf(b)) === '1'; } catch (e) { return false; } }
+  function dfuSeen(b) { try { localStorage.setItem(dfuKeyOf(b), '1'); } catch (e) { /* storage blocked */ } }
+
+  function askForDfu(c, first, touched) {
     var b = c.board;
     if (DEMO) {
       if (demoBoard.running) return stopWith(Object.assign(new Error('No board in update mode was found.'), { code: 'none' }), c);
@@ -464,7 +475,10 @@
       if (e && e.name === 'SecurityError' && first) {
         // The browser wants a fresh click before it shows its list.
         S.run.busy = false; S.run.waitPick = true;
-        log('The board is in update mode now. Click “Pick ' + (b.dfu.name || 'DFU in FS Mode') + '”.');
+        var pick = '“Pick ' + (b.dfu.name || 'DFU in FS Mode') + '”';
+        log(touched
+          ? 'The board was asked to restart into update mode. Click ' + pick + ' and choose it. If Chrome’s list is empty, the board didn’t come back: press its reset button and flash again.'
+          : 'Click ' + pick + ' and choose the board in update mode.');
         upd(); return;
       }
       if (e && e.name === 'NotFoundError') e = Object.assign(new Error('No board in update mode was chosen.'), { code: 'none' });
@@ -476,7 +490,8 @@
     var b = c.board, bytes = bytesFor.bytes, base = b.flash.base;
     S.run.busy = true; S.run.waitPick = false; S.run.step = 'write'; S.run.phase = 'Connecting…'; upd();
     var dfu = new D.Dfuse(dev, { log: function (t) { log(t); }, fallbackLayout: b.layout });
-    var W = { erase: [0, 0.15, 'Erasing'], write: [0.15, 0.6, 'Writing'], verify: [0.75, 0.25, 'Verifying'] };
+    dfuSeen(b);
+    var W ={ erase: [0, 0.15, 'Erasing'], write: [0.15, 0.6, 'Writing'], verify: [0.75, 0.25, 'Verifying'] };
     var lastDraw = 0;
     return dfu.open().then(function () {
       var seg = D.segmentAt(dfu.layout, base);
@@ -525,6 +540,10 @@
         ? ' “The board isn’t running firmware” is ticked, so Flasher didn’t ask the board to restart. If it is running firmware, untick that box and flash again.'
         : ' If the board was running, its firmware may not answer the restart request (or it’s blank).');
       run.errorHelp = '<details open><summary>Put it in update mode by hand</summary>' + manualHtml(b) + '</details>';
+    } else if (e && e.code === 'gone') {
+      run.errorTitle = 'The board didn’t come back';
+      run.error = msg + ' It has dropped off USB, which some firmware does now and then as it restarts. Press the board’s reset button (or unplug it and plug it back in), then flash again.';
+      run.errorHelp = '<details><summary>Or put it in update mode by hand</summary>' + manualHtml(b) + '</details>';
     } else if (e && e.code === 'busy') {
       run.error = msg;
     } else if (name === 'SecurityError' || /access denied/i.test(msg)) {
