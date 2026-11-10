@@ -211,7 +211,11 @@
   });
   test('the touch: a port that vanishes on close is fine; a busy one is explained', function () {
     return FL.serial.touch(F.serialPort({ vanish: true }), { sleep: noSleep }).then(function () {
-      return rejects(FL.serial.touch(F.serialPort({ busy: true }), { sleep: noSleep }), /Close anything else/);
+      var busy = F.serialPort({ busy: true }), tries = 0, open = busy.open;
+      busy.open = function (o) { tries++; return open(o); };
+      return rejects(FL.serial.touch(busy, { sleep: noSleep }), /Another program has it open: close the Arduino IDE/).then(function () {
+        eq(tries, 2, 'one retry');
+      });
     });
   });
 

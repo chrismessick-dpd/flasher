@@ -324,9 +324,11 @@
     if (!c || !bytesFor || bytesFor.key !== runKey() || (S.run && S.run.busy)) return;
     var b = c.board;
     S.run = { key: runKey(), busy: true, step: 'restart', log: [], pct: 0, phase: '', t0: Date.now() };
-    S.con = null;
+    // A console left open holds the board's serial port, and the restart request needs it.
+    var closing = con ? con.close() : Promise.resolve();
+    con = null; S.con = null; clearInterval(demoTimer);
     upd();
-    findDfu(b).then(function (dev) {
+    closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
       if (dev) { log('Found the board already in DFU mode (' + dev.productName + ').'); return dev; }
       if (S.skipTouch || !b.run || (!DEMO && !navigator.serial)) return null;
       return pickSerial(b).then(function (port) {
@@ -394,6 +396,9 @@
       if (DEMO) { demoBoard.running = true; demoDev = null; }
       log('Started the firmware at ' + D.hex(base) + '.', 'ok');
       S.run.busy = false; S.run.ok = true; S.run.ms = Date.now() - S.run.t0;
+      // The board now runs what was just written, so the next flash starts with the restart
+      // request again (left ticked, the DFU list would be empty).
+      S.skipTouch = false;
       upd();
     }).catch(function (e) { dfu.close(); throw e; });
   }
@@ -413,7 +418,9 @@
     run.errorTitle = 'The flash stopped'; run.errorHelp = '';
     if (e && e.code === 'none') {
       run.errorTitle = 'No board in DFU mode';
-      run.error = msg + ' If the board was running, its firmware may not answer the restart request (or it’s blank).';
+      run.error = msg + (S.skipTouch && b.run
+        ? ' “Already in DFU mode” is ticked, so Flasher didn’t ask the board to restart. If it’s running firmware, untick that box and flash again.'
+        : ' If the board was running, its firmware may not answer the restart request (or it’s blank).');
       run.errorHelp = '<details open><summary>Put it in DFU mode by hand</summary>' + manualHtml(b) + '</details>';
     } else if (e && e.code === 'busy') {
       run.error = msg;
