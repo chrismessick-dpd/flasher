@@ -17,6 +17,9 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   shared with them, each in `review-flasher-<project>` (README, *Access*; `assets/access.js`). Tried
   against `tests/fakegithub.js` and in the page with a fake GitHub; no real share yet. The live
   manifest has no `projects` map until the next publish (its dry run adds the project).
+- **Layout like Signoff EE (2026-11-10, Chris):** a sticky header with Open a .bin file on the right;
+  the sidebar lists firmware grouped by project in folding groups, with a search; the Dovetail Signoff
+  links fold to icons (`setupToolsFold`, copied from EE's `app.js`; keep it in step).
 - **Console (2026-11-10, Chris):** a terminal (`assets/term.js`), so the board's own line editing
   works (history, Tab, Ctrl-L, `clear`). Flash and Console are tabs of one panel; About folds.
   Tried in `?demo` against `FL.fakeusb.shell`; not yet against the board.

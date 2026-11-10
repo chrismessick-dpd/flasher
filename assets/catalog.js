@@ -69,9 +69,10 @@
   var DEMO_MANIFEST = {
     format: 1,
     updated: '2026-11-06T16:20:00Z',
+    projects: { thermostat: { name: 'Smart Thermostat' } },
     boards: {
       'tstat-main': {
-        name: 'Smart Thermostat Main PCBA', mcu: 'STM32G431 (made up for the demo)',
+        name: 'Smart Thermostat Main PCBA', mcu: 'STM32G431 (made up for the demo)', project: 'thermostat',
         flash: { base: '0x08000000', size: '0x20000' }, ram: { base: '0x20000000', size: '0x8000' },
         run: { vid: '0x0483', pid: '0x5740', name: 'Acme Thermostat' }, dfu: { vid: '0x0483', pid: '0xDF11', name: 'DFU in FS Mode' },
         touchBaud: 1200,
@@ -109,7 +110,12 @@
     return Promise.all(list.map(function (f) { return I.sha256(images[f.id]).then(function (h) { return h; }); })).then(function (hashes) {
       var m = JSON.parse(JSON.stringify(DEMO_MANIFEST));
       m.firmware.forEach(function (f, i) { f.sha256 = hashes[i]; f.path = 'firmware/' + f.board + '/' + f.id + '.bin'; delete f.seed; });
-      var c = I.cleanManifest(m);
+      var c = I.cleanManifest(m), names = FL.access.projectsIn(m);
+      c.projects = {};
+      Object.keys(c.boards).forEach(function (bid) {
+        var pid = FL.access.projectOf(bid, m.boards[bid]);
+        c.boards[bid].project = pid; c.projects[pid] = { name: names[pid], repo: 'the demo' };
+      });
       c.head = 'demo'; c.updated = m.updated; c.source = 'the demo';
       c.fetch = function (f) { return Promise.resolve(images[f.id].slice()); };
       return c;

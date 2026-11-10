@@ -30,34 +30,52 @@
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M7.5 3.5v13"/><path d="M13.5 8l-2 2 2 2" stroke-linecap="round"/></svg>
       </button>
     </div>
+    <div class="side-search">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/></svg>
+      <input id="fw-search" type="search" placeholder="Search projects and firmware" autocomplete="off">
+    </div>
+    <div class="side-head"><span class="side-label">Firmware</span></div>
     <nav class="side-list" id="fw-list" aria-label="Firmware"></nav>
-    <button type="button" class="side-link" data-act="open-file" title="Flash a .bin file from this computer">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg>
-      Open a .bin file…
-    </button>
-    <button type="button" class="side-link" id="people-link" data-act="people" title="Who can flash which projects" hidden>
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16.5c.6-2.8 2.6-4.3 5-4.3s4.4 1.5 5 4.3"/><circle cx="14" cy="7.8" r="2.2"/><path d="M13.6 12.3c2 .1 3.4 1.4 3.9 3.7"/></svg>
-      People &amp; access
-    </button>
-    <button type="button" class="side-link" data-act="driver" title="Set up Windows so the browser can reach a board in DFU mode">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4"/><circle cx="10" cy="14.4" r=".5" fill="currentColor"/></svg>
-      Windows driver help
-    </button>
-    <div class="side-tools">
+    <!-- The rest of the suite, folded to a row of icons as in Signoff EE (setupToolsFold in app.js). -->
+    <div class="side-tools" id="side-tools">
       <div class="side-head"><span class="side-label">Dovetail Signoff</span></div>
-      <a class="side-link" href="../fw_design_review/index.html" data-demo-href title="Open Signoff FW, the firmware design review">
-        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="11" height="11" rx="1.8"/><path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2"/><path d="M7.6 7.2L6 9l1.6 1.8M10.4 7.2L12 9l-1.6 1.8"/></svg></span>
+      <a class="side-link" href="../ee_design_review/index.html" data-demo-href title="Open Signoff EE, electrical design review">
+        <span class="tool-mark tool-mark-text">EE</span>
+        <span>Signoff EE<small>Electrical design review</small></span>
+      </a>
+      <a class="side-link" href="../me_design_review/index.html" data-demo-href title="Open Signoff ME, mechanical design review">
+        <span class="tool-mark tool-mark-text">ME</span>
+        <span>Signoff ME<small>Mechanical design review</small></span>
+      </a>
+      <a class="side-link" href="../fw_design_review/index.html" data-demo-href title="Open Signoff FW, firmware design review">
+        <span class="tool-mark tool-mark-text">FW</span>
         <span>Signoff FW<small>Firmware design review</small></span>
       </a>
-      <a class="side-link" href="../ee_design_review/index.html" data-demo-href title="Open Signoff EE, the electrical design review">
-        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><rect x="4.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M7 1.5v3M11 1.5v3M7 13.5v3M11 13.5v3M1.5 7h3M1.5 11h3M13.5 7h3M13.5 11h3"/></svg></span>
-        <span>Signoff EE<small>Electrical design review</small></span>
+      <a class="side-link" href="../pcb_dfm/index.html" data-demo-href title="Open Fabcheck, the fab package DFM checker">
+        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8"><rect x="1.5" y="1.5" width="15" height="15" rx="2.5"/><circle cx="6" cy="6" r="1.4" fill="#fff" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="#fff" stroke="none"/></svg></span>
+        <span>Fabcheck<small>Fab package DFM</small></span>
+      </a>
+      <a class="side-link" href="../signoff_pl/index.html" data-demo-href data-internal hidden title="Open Signoff PL, the product-level project view">
+        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="1.8" width="5" height="4" rx="1"/><rect x="1.8" y="12.2" width="5" height="4" rx="1"/><rect x="11.2" y="12.2" width="5" height="4" rx="1"/><path d="M9 5.8v3.2M4.3 12.2V9h9.4v3.2"/></svg></span>
+        <span>Signoff PL<small>Project lead</small></span>
+      </a>
+      <a class="side-link" href="../loom/index.html" data-demo-href title="Open Loom, harness drawings">
+        <span class="tool-mark"><svg viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 6.5h3.5c3 0 3 7 6 7h5.5M2.5 13.5h3.5c3 0 3-7 6-7h5.5"/></svg></span>
+        <span>Loom<small>Harness drawings</small></span>
       </a>
       <a class="side-link" href="../signoff/index.html" data-demo-href title="Back to Dovetail Signoff, all tools">
         <span class="tool-mark"><svg viewBox="0 0 18 18" fill="#fff"><rect x="2" y="2" width="6" height="6" rx="1.5"/><rect x="10" y="2" width="6" height="6" rx="1.5"/><rect x="2" y="10" width="6" height="6" rx="1.5"/><rect x="10" y="10" width="6" height="6" rx="1.5"/></svg></span>
         <span>All tools<small>Dovetail Signoff home</small></span>
       </a>
     </div>
+    <button type="button" class="side-link" id="people-link" data-act="people" title="Who can flash which projects" hidden>
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16.5c.6-2.8 2.6-4.3 5-4.3s4.4 1.5 5 4.3"/><circle cx="14" cy="7.8" r="2.2"/><path d="M13.6 12.3c2 .1 3.4 1.4 3.9 3.7"/></svg>
+      People &amp; access
+    </button>
+    <button type="button" class="side-link" data-act="driver" title="Set up Windows so the browser can reach a board in update mode">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4"/><circle cx="10" cy="14.4" r=".5" fill="currentColor"/></svg>
+      Windows driver help
+    </button>
     <div class="side-foot">
       <button class="sync-pill" data-act="account" id="account-pill" title="GitHub sign-in">
         <span class="sync-dot" id="account-dot"></span>
@@ -71,8 +89,15 @@
       <button class="icon-btn menu-toggle" data-act="nav" title="Show sidebar ( [ )" aria-label="Show sidebar">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h14M3 10h14M3 14h14"/></svg>
       </button>
-      <div class="toolbar-center"><span class="toolbar-title" id="toolbar-title"></span></div>
-      <div class="toolbar-actions"><span class="fl-version" id="version"></span></div>
+      <div class="toolbar-title" id="toolbar-title"></div>
+      <div class="toolbar-center"></div>
+      <div class="toolbar-actions">
+        <span class="fl-version" id="version"></span>
+        <button class="btn" data-act="open-file" title="Flash a .bin file from this computer">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg>
+          Open a .bin file…
+        </button>
+      </div>
     </header>
     <div id="view"></div>
   </main>

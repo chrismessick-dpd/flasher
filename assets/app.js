@@ -103,29 +103,86 @@
     setUrl();
   }
 
+  // The sidebar, as in Signoff EE: firmware grouped by project, each group folding (kept per browser),
+  // with a search over projects, boards, and firmware.
+  var GROUPS_KEY = (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'closedGroups';
+  function closedGroups() { try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function toggleGroup(pid) {
+    var c = closedGroups(); if (c[pid]) delete c[pid]; else c[pid] = 1;
+    try { localStorage.setItem(GROUPS_KEY, JSON.stringify(c)); } catch (e) { /* storage blocked */ }
+    renderSide();
+  }
+  var FW_ICON = '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2.2"/><path d="M11 6.6 8.4 10.3h3.3L9.2 13.6"/></svg></span>';
   function renderSide() {
-    var list = $('#fw-list'), h = '';
+    var list = $('#fw-list'), h = '', q = ($('#fw-search').value || '').trim().toLowerCase();
     if (S.catalog) {
-      var by = {};
-      S.catalog.firmware.forEach(function (f) { (by[f.board] = by[f.board] || []).push(f); });
-      Object.keys(boards()).forEach(function (bid) {
-        var fws = by[bid] || [];
-        h += '<div class="side-group"><div class="side-head"><span class="side-label">' + esc(boards()[bid].name) + '</span></div>';
-        h += fws.length ? fws.map(function (f) {
-          var key = f.id + '@' + f.board, on = S.view === 'fw' && S.fwId === key;
-          return '<button class="proj' + (on ? ' active' : '') + '" data-act="open-fw" data-fw="' + esc(key) + '" title="' + esc(f.summary || f.name) + '">' +
-            '<span class="proj-body"><span class="proj-name">' + esc(f.name) + '</span><span class="proj-sub">' + esc(I.fmtBytes(f.size) + (f.built ? ' · ' + fmtDate(f.built) : '')) + '</span></span></button>';
-        }).join('') : '<div class="side-empty">No firmware yet</div>';
-        h += '</div>';
+      var bs = boards(), pj = S.catalog.projects || {}, closed = closedGroups(), groups = {};
+      S.catalog.firmware.forEach(function (f) {
+        var b = bs[f.board], pid = (b && b.project) || f.board, pname = (pj[pid] && pj[pid].name) || (b && b.name) || pid;
+        if (q && [f.name, f.summary, b && b.name, pname].join(' ').toLowerCase().indexOf(q) < 0) return;
+        (groups[pid] = groups[pid] || { name: pname, list: [], boards: {} }).list.push(f);
+        groups[pid].boards[f.board] = 1;
       });
+      h = Object.keys(groups).sort(function (a, b) { return groups[a].name.localeCompare(groups[b].name); }).map(function (pid) {
+        var g = groups[pid], many = Object.keys(g.boards).length > 1;
+        var holds = g.list.some(function (f) { return S.view === 'fw' && S.fwId === f.id + '@' + f.board; });
+        var open = !closed[pid] || !!q || holds;
+        g.list.sort(function (x, y) { return (bs[x.board].name + x.name).localeCompare(bs[y.board].name + y.name); });
+        return '<div class="side-group"><button class="side-group-head" data-act="toggle-group" data-group="' + esc(pid) + '" aria-expanded="' + open + '">' +
+          '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+          '<span class="side-group-name">' + esc(g.name) + '</span><span class="side-group-count">' + g.list.length + '</span></button>' +
+          (open ? g.list.map(function (f) {
+            var key = f.id + '@' + f.board, on = S.view === 'fw' && S.fwId === key;
+            var sub = [many ? bs[f.board].name : '', I.fmtBytes(f.size), f.built ? fmtDate(f.built) : ''].filter(Boolean).join(' · ');
+            return '<button class="proj' + (on ? ' active' : '') + '" data-act="open-fw" data-fw="' + esc(key) + '" title="' + esc(f.summary || f.name) + '">' + FW_ICON +
+              '<span class="proj-body"><span class="proj-name">' + esc(f.name) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+          }).join('') : '') + '</div>';
+      }).join('');
+      if (!h) h = '<div class="side-empty">' + (q ? 'No matching firmware.' : 'No firmware yet.') + '</div>';
     } else if (S.loading) h = '<div class="side-empty">Loading firmware…</div>';
-    else if (!DEMO && !C.auth.token()) h = '<div class="side-empty">Sign in to list firmware.</div>';
+    else if (!DEMO && !C.auth.token()) h = '<div class="side-empty">Sign in to see firmware.</div>';
     if (S.local) {
-      h += '<div class="side-group"><div class="side-head"><span class="side-label">From this computer</span></div>' +
-        '<button class="proj' + (S.view === 'local' ? ' active' : '') + '" data-act="open-local"><span class="proj-body"><span class="proj-name">' + esc(S.local.name) +
+      h += '<div class="side-group"><div class="side-group-head fl-static-head"><span class="side-group-name">From this computer</span></div>' +
+        '<button class="proj' + (S.view === 'local' ? ' active' : '') + '" data-act="open-local">' + FW_ICON + '<span class="proj-body"><span class="proj-name">' + esc(S.local.name) +
         '</span><span class="proj-sub">' + esc(I.fmtBytes(S.local.bytes.length)) + '</span></span></button></div>';
     }
     list.innerHTML = h;
+    var pl = document.querySelector('.side-tools [data-internal]');
+    if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
+  }
+
+  // The Dovetail Signoff links fold to a row of icons, as in Signoff EE (setupToolsFold there):
+  // the chevron opens them, and they fold again 10 s after the pointer or keyboard leaves.
+  var TOOLS_FOLD_MS = 10000;
+  function setupToolsFold(tools) {
+    var head = tools.querySelector('.side-head');
+    if (!head || tools.dataset.fold) return;
+    tools.dataset.fold = '1';
+    var label = head.textContent.trim() || 'Dovetail Signoff';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'side-tools-toggle';
+    btn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>' +
+      '<span class="side-label">' + esc(label) + '</span>';
+    head.textContent = '';
+    head.appendChild(btn);
+    var timer = null;
+    function inUse() { return tools.matches(':hover') || !!tools.querySelector(':focus-visible'); }
+    function stop() { if (timer) { clearTimeout(timer); timer = null; } }
+    function arm() { stop(); if (!tools.classList.contains('folded') && !inUse()) timer = setTimeout(function () { set(true); }, TOOLS_FOLD_MS); }
+    function set(folded) {
+      tools.classList.toggle('folded', folded);
+      var tip = (folded ? 'Show ' : 'Hide ') + label + ' tools';
+      btn.setAttribute('aria-expanded', String(!folded));
+      btn.title = tip; btn.setAttribute('aria-label', tip);
+      if (folded) stop(); else arm();
+    }
+    btn.addEventListener('click', function () { set(!tools.classList.contains('folded')); });
+    tools.addEventListener('mouseenter', stop);
+    tools.addEventListener('mouseleave', function () { setTimeout(arm, 0); });
+    tools.addEventListener('focusin', function () { if (inUse()) stop(); });
+    tools.addEventListener('focusout', function () { setTimeout(arm, 0); });
+    set(true);
   }
 
   function renderAccount() {
@@ -823,6 +880,7 @@
       case 'sheet-bg': case 'sheet-close': closeSheet(); break;
       case 'sign-out': C.auth.clear(); closeSheet(); S.catalog = null; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out'); break;
       case 'reload': load(); break;
+      case 'toggle-group': toggleGroup(el.dataset.group); break;
       case 'people': select('people'); loadAccess(); break;
       case 'refresh-access': P.map = null; loadAccess(); render(); break;
       case 'add-person': personSheet(''); break;
@@ -930,6 +988,9 @@
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { applyTheme(readTheme()); });
   try { if (localStorage.getItem(SIDE_KEY)) $('#app').classList.add('side-collapsed'); } catch (e) { /* storage blocked */ }
   $('#version').textContent = FL.VERSION ? 'v' + FL.VERSION : '';
+  setupToolsFold($('#side-tools'));
+  $('#fw-search').addEventListener('input', renderSide);
+  $('#main').addEventListener('scroll', function () { $('#toolbar').classList.toggle('scrolled', $('#main').scrollTop > 60); }, { passive: true });
   if (DEMO) {
     var banner = $('#demo-banner');
     banner.innerHTML = 'Demo: the made-up Smart Thermostat for Acme Climate. Flashing goes to a board simulated in this page; nothing touches USB. <a href="./">Leave the demo</a>';
