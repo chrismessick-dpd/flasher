@@ -134,6 +134,7 @@ users.json            flasher_data only: the People list
       "ram":   { "base": "0x20000000", "size": "0x1C000" },
       "dfu":   { "vid": "0x0483", "pid": "0xDF11", "name": "DFU in FS Mode" },
       "run":   { "vid": "0x0483", "pid": "0x5740", "name": "<USB product string>" },
+      "runAlso": [{ "vid": "0x…", "pid": "0x…", "name": "<another firmware's product string>" }],
       "touchBaud": 1200,
       "layout": "@Internal Flash  /0x08000000/256*02Kg",
       "manualDfu": ["step", "step"],
@@ -153,6 +154,9 @@ users.json            flasher_data only: the People list
   A new board is a new `board` in a firmware repo's `flasher.json` (below), with no change here.
 - `run` is optional. Without it there is no 1200-baud touch and the board is always put in DFU mode
   by hand.
+- `runAlso` lists the USB ids of other firmware the same board may be running (a second code base
+  built for it), each restarted with the same touch. Flasher looks for any of them, and the browser's
+  list offers them all. It is kept apart from `run` so an older page still reads the manifest.
 - `layout` is the DfuSe layout to use if the browser can't read the device's alternate setting names.
 - Numbers may be JSON numbers or `"0x…"` strings.
 - Entries that don't validate are skipped and listed on the page (`FL.image.cleanManifest`).
@@ -169,6 +173,18 @@ firmware repo describes itself in a `flasher.json` at its sketchbook root:
 - `depends` (what every sketch builds against, such as the board package; counted in the dirty and stale checks);
 - `build` (the command, run from the sketchbook with the sketch folders appended);
 - `output` (`build/{name}/{name}.ino.bin`).
+
+A firmware repo that builds one image as a whole, rather than a folder of sketches, lists `images`
+in place of `examples` and `output`. Each image has `name`, `source` (the folder whose changes count
+in the dirty and stale checks), `output` (the `.bin`), and optionally `id`, `exclude` (folders under
+`source` to leave out of the stale check, such as the build's own output), `summary`, and
+`description`. `build` then runs once, with nothing appended, and `path` can list folders to put
+first on `PATH` for it (a vendor toolchain).
+
+Two firmware repos for one board share its details: the second one's `board` is just the board's id
+(a string), and the details are read from the manifest the first one published. `runs_as`
+(`{ "vid", "pid" }`) is the second firmware's own USB id. The publish refuses until the board's `run`
+or `runAlso` lists it, so Flasher can always restart a board running either.
 
 ```
 python tools/publish.py --source <sketchbook>                  dry run: build, check, show the plan and a code

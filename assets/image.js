@@ -74,10 +74,14 @@
     if (!flash) return bad('flash needs base and size.');
     if (!ram) return bad('ram needs base and size.');
     if (!dfu) return bad('dfu needs vid and pid.');
+    // run: the USB id of the board's own firmware, which takes the touch. runAlso: the ids of other
+    // firmware the same board may be running (another code base built for it), each touched the same
+    // way. Kept apart from run, so a page that only knows run still reads the manifest.
     var run = usb(b.run);
+    var runs = run ? [run].concat((Array.isArray(b.runAlso) ? b.runAlso : []).map(usb).filter(Boolean).slice(0, 7)) : [];
     return {
       id: id, name: str(b.name, 80) || id, mcu: str(b.mcu, 60), flash: flash, ram: ram, dfu: dfu,
-      run: run, touchBaud: run ? (num(b.touchBaud) || 1200) : 0,
+      run: run, runs: runs, touchBaud: run ? (num(b.touchBaud) || 1200) : 0,
       layout: str(b.layout, 200),                         // DfuSe layout if the browser can't read the device's
       manualDfu: Array.isArray(b.manualDfu) ? b.manualDfu.map(function (s) { return str(s, 300); }).filter(Boolean).slice(0, 8) : [],
       notes: str(b.notes, 1200)

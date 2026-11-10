@@ -27,7 +27,20 @@
     });
   }
 
-  function matches(info, ids) { return !!ids && info && info.usbVendorId === ids.vid && info.usbProductId === ids.pid; }
+  /* Whether a port is one of the board's: ids is one {vid, pid} or a list of them (board.runs). */
+  function matches(info, ids) {
+    var list = Array.isArray(ids) ? ids : ids ? [ids] : [];
+    return !!info && list.some(function (r) { return info.usbVendorId === r.vid && info.usbProductId === r.pid; });
+  }
+  function filters(ids) {
+    return (Array.isArray(ids) ? ids : [ids]).filter(Boolean).map(function (r) { return { usbVendorId: r.vid, usbProductId: r.pid }; });
+  }
+  /* What to call the port in the browser's list: "A" or "A or B". */
+  function portNames(ids, fallback) {
+    var names = (Array.isArray(ids) ? ids : [ids]).filter(Boolean).map(function (r) { return r.name; }).filter(Boolean);
+    names = names.filter(function (n, i) { return names.indexOf(n) === i; });
+    return names.length ? names.join(' or ') : fallback;
+  }
 
   /* A console on an open port: open(port) then send(text); onData(text) gets what arrives.
      Opens at 115200 (any rate but the touch rate: 1200 would send the board back to its bootloader). */
@@ -77,5 +90,5 @@
     }).catch(function () {}).then(function () { self.onClose(); });
   };
 
-  FL.serial = { touch: touch, matches: matches, Console: Console, sleep: sleep };
+  FL.serial = { touch: touch, matches: matches, filters: filters, portNames: portNames, Console: Console, sleep: sleep };
 })(window.FL = window.FL || {});

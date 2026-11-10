@@ -106,6 +106,27 @@
     eq(c.problems.length, 5);
   });
 
+  test('cleanBoard: runAlso adds firmware ids the board may be running; run stays the first', function () {
+    var b = I.cleanBoard('two', {
+      flash: { base: 0, size: 1 }, ram: { base: 0, size: 1 }, dfu: { vid: 1, pid: 2 },
+      run: { vid: '0x0483', pid: '0x5740', name: 'Sketch' },
+      runAlso: [{ vid: '0x1234', pid: '0x0007', name: 'App' }, { vid: 'bad' }, 'junk']
+    }, []);
+    eq(b.run.pid, 0x5740); eq(b.runs.length, 2); eq(b.runs[1].vid, 0x1234); eq(b.touchBaud, 1200);
+    var none = I.cleanBoard('none', { flash: { base: 0, size: 1 }, ram: { base: 0, size: 1 }, dfu: { vid: 1, pid: 2 }, runAlso: [{ vid: 1, pid: 3 }] }, []);
+    eq(none.run, null, 'runAlso without run: no touch'); eq(none.runs.length, 0);
+  });
+
+  test('serial: matches, filters, and names cover every id', function () {
+    var S = FL.serial, runs = [{ vid: 1, pid: 2, name: 'Sketch' }, { vid: 3, pid: 4, name: 'App' }, { vid: 5, pid: 6, name: 'App' }];
+    ok(S.matches({ usbVendorId: 3, usbProductId: 4 }, runs), 'second id');
+    ok(S.matches({ usbVendorId: 1, usbProductId: 2 }, runs[0]), 'one id, as before');
+    ok(!S.matches({ usbVendorId: 1, usbProductId: 4 }, runs), 'vid and pid must pair');
+    ok(!S.matches(null, runs)); ok(!S.matches({ usbVendorId: 1, usbProductId: 2 }, null));
+    eq(JSON.stringify(S.filters(runs.slice(0, 2))), '[{"usbVendorId":1,"usbProductId":2},{"usbVendorId":3,"usbProductId":4}]');
+    eq(S.portNames(runs, 'x'), 'Sketch or App', 'names once each'); eq(S.portNames([], 'the board'), 'the board');
+  });
+
   // ── DfuSe against the simulated bootloader ──
   test('flash: erase, write, verify, and leave on a 512 KB part', function () {
     var dev = F.device(), img = image(31003, 9);   // odd length: the tail is padded to a double word

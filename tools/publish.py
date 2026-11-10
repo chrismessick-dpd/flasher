@@ -20,6 +20,7 @@ Usage (from the flasher folder):
     python tools/publish.py --source <sketchbook>                  dry run: build, check, and show the plan
     python tools/publish.py --source <sketchbook> --no-build       dry run on the .bin files already built
     python tools/publish.py --source <sketchbook> --only Blink Pulse
+    python tools/publish.py --source <sketchbook> --board-only     only the board's details (its run ids, button steps)
     python tools/publish.py --source <sketchbook> --push --confirm <code>   commit what the dry run showed
 
 `--source` can be left out once `tools/publish.local.json` (git-ignored) holds {"source": "<sketchbook>"}.
@@ -183,6 +184,70 @@ def plan_manifest(old_bytes, board, entries, now, project=None):
     return new_bytes, changed, board_changed
 
 
+def list_items(cfg, src):
+    """What flasher.json publishes: one item per example sketch, or the listed images. Each item is
+    {name, id, rel, dir, skip, bin, summary, description}."""
+    if "images" in cfg:
+        out = []
+        for i, im in enumerate(cfg["images"]):
+            name = im.get("name") or ""
+            if not name or "output" not in im or "source" not in im:
+                raise Fail(f"flasher.json's images #{i + 1} needs name, source, and output")
+            d = src / im["source"]
+            if not d.is_dir():
+                raise Fail(f"flasher.json's images #{i + 1}: source {d} isn't a folder")
+            desc = im.get("description") or im.get("summary") or ""
+            out.append({"name": name, "id": im.get("id") or fw_id(name), "rel": im["source"], "dir": d,
+                        "skip": [src / x for x in im.get("exclude", [])], "bin": src / im["output"],
+                        "summary": im.get("summary") or " ".join(desc.split("\n\n")[0].split()), "description": desc})
+        ids = [x["id"] for x in out]
+        if len(set(ids)) != len(ids):
+            raise Fail("flasher.json's images have the same id twice")
+        for x in out:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", x["id"]):
+                raise Fail(f"image id {x['id']!r} may only use a-z, 0-9, _ and -")
+        return out
+    ex_dir = src / cfg["examples"]
+    out = []
+    for p in sorted(ex_dir.iterdir()):
+        if (p / (p.name + ".ino")).exists():
+            summary, desc = header_comment((p / (p.name + ".ino")).read_text(encoding="utf-8", errors="replace"))
+            out.append({"name": p.name, "id": fw_id(p.name), "rel": str(p.relative_to(src)).replace("\\", "/"), "dir": p, "skip": [],
+                        "bin": src / cfg.get("output", "build/{name}/{name}.ino.bin").format(name=p.name),
+                        "summary": summary, "description": desc})
+    return out
+
+
+def newest_in(d, skip):
+    """The newest file time under d, leaving out the folders in skip (a build's own output)."""
+    skip = [x.resolve() for x in skip]
+    t = 0
+    for p in d.rglob("*"):
+        if p.is_file():
+            rp = p.resolve()
+            if not any(x == rp or x in rp.parents for x in skip):
+                t = max(t, p.stat().st_mtime)
+    return t
+
+
+def runs_on(board, ids):
+    """Whether the board's run or runAlso lists this USB id, so Flasher can restart a board running it."""
+    want = (num(ids["vid"]), num(ids["pid"]))
+    runs = ([board["run"]] if board.get("run") else []) + list(board.get("runAlso") or [])
+    return any((num(r["vid"]), num(r["pid"])) == want for r in runs)
+
+
+def board_from_manifest(manifest_bytes, bid, pid, full):
+    """A board another firmware repo publishes, as the manifest has it (for flasher.json's "board": "<id>")."""
+    m = json.loads(manifest_bytes) if manifest_bytes else {}
+    b = (m.get("boards") or {}).get(bid)
+    if not b:
+        raise Fail(f"board {bid} isn't in {full}'s manifest yet; publish from the firmware repo that defines it first")
+    if b.get("project", bid) != pid:
+        raise Fail(f"board {bid} belongs to project {b.get('project')!r} in the manifest, not {pid!r}")
+    return dict(b, id=bid)
+
+
 # ── GitHub ──
 
 def token():
@@ -264,6 +329,7 @@ def main(argv=None):
     ap.add_argument("--source", help="the firmware sketchbook (holds flasher.json)")
     ap.add_argument("--only", nargs="+", metavar="NAME", help="publish only these examples")
     ap.add_argument("--no-build", action="store_true", help="use the .bin files already built")
+    ap.add_argument("--board-only", action="store_true", help="publish only the board's details (no build, no images)")
     ap.add_argument("--bash", help="bash to run the build with (default: Git's)")
     ap.add_argument("--allow-dirty", action="store_true", help="publish sketches with uncommitted changes (they're marked)")
     ap.add_argument("--push", action="store_true", help="commit to the data repo (needs --confirm)")
@@ -279,29 +345,36 @@ def main(argv=None):
     if not cfg_path.exists():
         raise Fail(f"{cfg_path} not found")
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    board, full = cfg["board"], cfg["data_repo"]
+    full = cfg["data_repo"]
+    # The board: defined here, or (a string) the id of a board another firmware repo already
+    # publishes, read from the manifest. Two repos for one board then never fight over its details.
+    board_ref = cfg["board"] if isinstance(cfg["board"], str) else None
+    board = {"id": board_ref} if board_ref else cfg["board"]
     bid = board["id"]
     # The project the board belongs to: what People & access shares (README, *Access*).
     proj = cfg.get("project") or {}
     pid, pname = proj.get("id") or board.get("project") or bid, proj.get("name") or board.get("name", bid)
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", pid):
         raise Fail(f"project id {pid!r} may only use a-z, 0-9, _ and -")
-    board = dict(board, project=pid)
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", bid):
         raise Fail(f"board id {bid!r} may only use a-z, 0-9, _ and -")
-    for k in ("flash", "ram", "dfu"):
-        if k not in board:
-            raise Fail(f"flasher.json's board needs {k}")
+    if not board_ref:
+        board = dict(board, project=pid)
+        for k in ("flash", "ram", "dfu"):
+            if k not in board:
+                raise Fail(f"flasher.json's board needs {k}")
 
-    ex_dir = src / cfg["examples"]
-    names = sorted(p.name for p in ex_dir.iterdir() if (p / (p.name + ".ino")).exists())
+    if a.board_only and board_ref:
+        raise Fail("--board-only publishes a board's details, and this flasher.json only names its board")
+    items = [] if a.board_only else list_items(cfg, src)
+    names = [i["name"] for i in items]
     if a.only:
         missing = [n for n in a.only if n not in names]
         if missing:
-            raise Fail("not in the examples: " + ", ".join(missing) + " (have " + ", ".join(names) + ")")
-        names = [n for n in names if n in a.only]
-    if not names:
-        raise Fail(f"no sketches in {ex_dir}")
+            raise Fail("not in " + ("the images" if "images" in cfg else "the examples") + ": " + ", ".join(missing) + " (have " + ", ".join(names) + ")")
+        items = [i for i in items if i["name"] in a.only]
+    if not items and not a.board_only:
+        raise Fail("flasher.json's images is empty" if "images" in cfg else "no sketches in " + str(src / cfg["examples"]))
 
     top = pathlib.Path(git(src, "rev-parse", "--show-toplevel")).resolve()
     sha = git(src, "rev-parse", "HEAD")
@@ -309,19 +382,29 @@ def main(argv=None):
     m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", remote)
     repo_name = m.group(1) if m else remote
 
-    if not a.no_build:
+    if not a.no_build and not a.board_only:
         cmd = list(cfg.get("build", ["bash", "tools/build.sh"]))
         if cmd[0] == "bash":
             cmd[0] = find_bash(a.bash)
-        cmd += [str((ex_dir / n).relative_to(src)).replace("\\", "/") for n in names]
-        print(f"Building {len(names)} sketch{'es' if len(names) != 1 else ''}: {' '.join(cmd[1:2])} …", flush=True)
-        r = subprocess.run(cmd, cwd=src)
+        env = None
+        if cfg.get("path"):
+            # Folders the build's tools live in (a vendor toolchain not on PATH), put first.
+            env = dict(os.environ, PATH=os.pathsep.join([str(pathlib.Path(x)) for x in cfg["path"]] + [os.environ.get("PATH", "")]))
+            exe = shutil.which(cmd[0], path=env["PATH"])
+            if exe:
+                cmd[0] = exe
+        if "images" in cfg:
+            print(f"Building: {' '.join(cfg.get('build', []))} …", flush=True)
+        else:
+            cmd += [i["rel"] for i in items]
+            print(f"Building {len(items)} sketch{'es' if len(items) != 1 else ''}: {' '.join(cmd[1:2])} …", flush=True)
+        r = subprocess.run(cmd, cwd=src, env=env)
         if r.returncode:
             raise Fail(f"the build failed (exit {r.returncode})")
 
-    # What every sketch builds against (the board package, its core and libraries): a change there
-    # changes every image, so it counts toward each sketch's dirty and stale checks.
-    entries, problems, warnings = [], [], []
+    # What every image builds against (the board package, its core and libraries): a change there
+    # changes every image, so it counts toward each one's dirty and stale checks.
+    built, problems, warnings = [], [], []
     deps = [src / d for d in cfg.get("depends", [])]
     for d in deps:
         if not d.exists():
@@ -332,44 +415,31 @@ def main(argv=None):
     if dep_dirty:
         warnings.append("the board package (" + ", ".join(dep_rels) + ") has uncommitted changes")
 
-    for n in names:
-        sk = ex_dir / n
-        binp = src / cfg.get("output", "build/{name}/{name}.ino.bin").format(name=n)
+    for it in items:
+        n, binp = it["name"], it["bin"]
         if not binp.exists():
             problems.append(f"{n}: {binp} not built")
             continue
         b = binp.read_bytes()
-        errs = check_image(b, board)
-        if errs:
-            problems.append(f"{n}: " + "; ".join(errs))
-            continue
-        newest = max([p.stat().st_mtime for p in sk.rglob("*") if p.is_file()] + [dep_newest])
+        newest = max(newest_in(it["dir"], it["skip"]), dep_newest)
         if binp.stat().st_mtime < newest:
-            warnings.append(f"{n}: the .bin is older than its sketch or the board package; build again (drop --no-build)")
-        rel = str(sk.relative_to(top)).replace("\\", "/")
+            warnings.append(f"{n}: the .bin is older than its source; build again (drop --no-build)")
+        rel = str(it["dir"].resolve().relative_to(top)).replace("\\", "/")
         dirty = dep_dirty or bool(git(top, "status", "--porcelain", "--untracked-files=no", "--", rel))
         if dirty and not a.allow_dirty:
             problems.append(f"{n}: has uncommitted changes (commit them, or pass --allow-dirty to publish marked)")
             continue
-        summary, desc = header_comment((sk / (n + ".ino")).read_text(encoding="utf-8", errors="replace"))
-        fid = fw_id(n)
-        entries.append({
-            "id": fid, "board": bid, "name": n, "summary": summary, "description": desc,
-            "size": len(b), "sha256": hashlib.sha256(b).hexdigest(), "path": f"firmware/{bid}/{fid}.bin",
+        built.append({
+            "id": it["id"], "board": bid, "name": n, "summary": it["summary"], "description": it["description"],
+            "size": len(b), "sha256": hashlib.sha256(b).hexdigest(), "path": f"firmware/{bid}/{it['id']}.bin",
             "source": {"repo": repo_name, "sha": sha, "path": rel, "dirty": dirty},
             "built": datetime.datetime.fromtimestamp(binp.stat().st_mtime, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "_bytes": b,
         })
 
     print(f"\nSource   {repo_name} @ {sha[:10]}  ({src})")
-    print(f"Board    {bid}: {board.get('name', bid)}  (project {pid}: {pname})")
+    print(f"Board    {bid}{' (as the manifest has it)' if board_ref else ': ' + board.get('name', bid)}  (project {pid}: {pname})")
     print(f"Data     {full}")
-    for w in warnings:
-        print("  warning: " + w)
-    for p in problems:
-        print("  skipped: " + p)
-    if not entries:
-        raise Fail("nothing to publish")
 
     tok = token()
     repo = read_repo(full, tok)
@@ -381,6 +451,27 @@ def main(argv=None):
             full, repo = home, read_repo(home, tok)
             if "missing" in repo:
                 raise Fail(f"{home} is {repo['missing']}; check Flasher's People & access")
+    if board_ref:
+        board = board_from_manifest(repo.get("manifest"), bid, pid, full)
+    runs_as = cfg.get("runs_as")
+    if runs_as and not runs_on(board, runs_as):
+        raise Fail(f"board {bid} doesn't list this firmware's USB id ({runs_as.get('vid')}:{runs_as.get('pid')}) in run or "
+                   "runAlso, so Flasher couldn't restart a board running it. Add it to runAlso in the flasher.json that "
+                   "defines the board, and publish that first.")
+
+    entries = []
+    for e in built:
+        errs = check_image(e["_bytes"], board)
+        if errs:
+            problems.append(f"{e['name']}: " + "; ".join(errs))
+        else:
+            entries.append(e)
+    for w in warnings:
+        print("  warning: " + w)
+    for p in problems:
+        print("  skipped: " + p)
+    if not entries and not a.board_only:
+        raise Fail("nothing to publish")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     clean = [{k: v for k, v in e.items() if k != "_bytes"} for e in entries]
     if "missing" in repo:

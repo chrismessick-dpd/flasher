@@ -313,7 +313,7 @@
     h += '<ol class="fl-steps">';
     h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Put the board in update mode</div>' +
       (canTouch && !S.skipTouch
-        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(b.run.name || 'the board') + '</b> and click <b>Connect</b>.</div>'
+        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.</div>'
         : '<div class="fl-step-sub">Press these on the board, then click <b>Flash board</b>:</div>' + buttonsHtml(b)) +
       (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board isn’t running firmware (new, blank, or stuck)</label>' : '') +
       '</div></li>';
@@ -353,7 +353,7 @@
   function consoleHtml(c) {
     var st = S.con || {}, busy = S.run && S.run.busy;
     var tone = st.open ? 'ok' : st.connecting ? 'busy' : st.error ? 'error' : 'idle';
-    var label = st.open ? 'Connected to ' + (c.board.run.name || 'the board') : st.connecting ? 'Connecting…' : st.error ? st.error : 'Not connected';
+    var label = st.open ? 'Connected to ' + (st.name || FL.serial.portNames(c.board.runs, 'the board')) : st.connecting ? 'Connecting…' : st.error ? st.error : 'Not connected';
     return '<div class="fl-con-bar"><span class="sync-dot" data-tone="' + tone + '"></span><span class="fl-con-status">' + esc(label) + '</span><span class="fl-grow"></span>' +
       (st.open ? '<button class="btn" data-act="console-close">Disconnect</button>'
         : '<button class="btn btn-primary" data-act="console"' + (st.connecting || busy ? ' disabled' : '') + '>Connect</button>') +
@@ -405,11 +405,10 @@
   }
   function pickSerial(b) {
     if (DEMO) return Promise.resolve(demoBoard.running ? FL.fakeusb.serialPort({ vid: b.run.vid, pid: b.run.pid }) : null);
-    var filter = { usbVendorId: b.run.vid, usbProductId: b.run.pid };
     return navigator.serial.getPorts().then(function (ports) {
-      var mine = ports.filter(function (p) { return FL.serial.matches(p.getInfo(), b.run); });
+      var mine = ports.filter(function (p) { return FL.serial.matches(p.getInfo(), b.runs); });
       if (mine.length === 1) return mine[0];
-      return navigator.serial.requestPort({ filters: [filter] });
+      return navigator.serial.requestPort({ filters: FL.serial.filters(b.runs) });
     }).catch(function (e) {
       if (e && e.name === 'NotFoundError') return null;   // the picker was closed, or no such port
       throw e;
@@ -602,17 +601,20 @@
     var waitUntil = S.run && S.run.ok && Date.now() - S.run.doneAt < 8000 ? Date.now() + 5000 : 0;
     function known() {
       return navigator.serial.getPorts().then(function (ports) {
-        return ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.run); })[0] || null;
+        return ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.runs); })[0] || null;
       });
     }
     function find() {
       return known().then(function (p) {
         if (p) return p;
         if (Date.now() < waitUntil) return FL.serial.sleep(300).then(find);
-        return navigator.serial.requestPort({ filters: [{ usbVendorId: b.run.vid, usbProductId: b.run.pid }] });
+        return navigator.serial.requestPort({ filters: FL.serial.filters(b.runs) });
       });
     }
     find().then(function (port) {
+      // Name the firmware that answered, when the board can run more than one.
+      var info = port.getInfo ? port.getInfo() : {}, which = b.runs.filter(function (r) { return FL.serial.matches(info, r); })[0];
+      if (S.con && which && which.name) S.con.name = which.name;
       con = new FL.serial.Console(termAdd, function () { closed(''); });
       return con.open(port).then(done);
     }).catch(function (e) {

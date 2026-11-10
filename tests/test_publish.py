@@ -125,5 +125,68 @@ class PlanManifest(unittest.TestCase):
         self.assertEqual(P.git_blob_sha(b"hello\n"), "ce013625030ba8dba906f756967f9e9ca394464a")
 
 
+
+class Images(unittest.TestCase):
+    """flasher.json's images: one firmware built as a whole, rather than a folder of sketches."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.src = pathlib.Path(self.tmp.name)
+        (self.src / "app" / "build").mkdir(parents=True)
+        (self.src / "app" / "main.c").write_text("int main(void) { return 0; }" + chr(10))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_items(self):
+        cfg = {"images": [{"name": "Thermostat App", "source": "app", "output": "app/build/app.bin", "exclude": ["app/build"],
+                           "description": "The app." + chr(10) + "All of it." + chr(10) * 2 + "More."}]}
+        it = P.list_items(cfg, self.src)[0]
+        self.assertEqual((it["id"], it["summary"], it["rel"]), ("thermostat-app", "The app. All of it.", "app"))
+        self.assertEqual(it["bin"], self.src / "app" / "build" / "app.bin")
+
+    def test_bad_items(self):
+        for bad in ([{"name": "x", "source": "app"}], [{"name": "x", "source": "nope", "output": "a.bin"}],
+                    [{"name": "A b", "source": "app", "output": "a"}, {"name": "a-b", "source": "app", "output": "b"}],
+                    [{"name": "x", "id": "Bad Id", "source": "app", "output": "a"}]):
+            with self.assertRaises(P.Fail):
+                P.list_items({"images": bad}, self.src)
+
+    def test_newest_skips_the_build(self):
+        import os
+        os.utime(self.src / "app" / "main.c", (1000, 1000))
+        out = self.src / "app" / "build" / "app.bin"
+        out.write_bytes(b"x")
+        os.utime(out, (5000, 5000))
+        self.assertEqual(P.newest_in(self.src / "app", [self.src / "app" / "build"]), 1000)
+        self.assertEqual(P.newest_in(self.src / "app", []), 5000)
+
+
+class BoardRef(unittest.TestCase):
+    """A second firmware repo for a board names it by id and takes its details from the manifest."""
+    MAN = json.dumps({"format": 1, "boards": {"test-g4": dict({k: v for k, v in BOARD.items() if k != "id"}, project="tstat",
+        run={"vid": "0x0483", "pid": "0x5740"}, runAlso=[{"vid": "0x1234", "pid": "0x0007"}])}, "firmware": []}).encode()
+
+    def test_found_and_runs(self):
+        b = P.board_from_manifest(self.MAN, "test-g4", "tstat", "o/r")
+        self.assertEqual(b["id"], "test-g4")
+        self.assertTrue(P.runs_on(b, {"vid": "0x1234", "pid": "0x0007"}))
+        self.assertTrue(P.runs_on(b, {"vid": "0x0483", "pid": 0x5740}))
+        self.assertFalse(P.runs_on(b, {"vid": "0x1234", "pid": "0x5740"}))
+        # Unchanged details: publishing under the reference never rewrites the board.
+        _, _, changed = P.plan_manifest(None, b, [], NOW)
+        old, _, _ = P.plan_manifest(None, b, [entry("blink")], NOW)
+        _, _, bc = P.plan_manifest(old, b, [entry("blink")], LATER)
+        self.assertFalse(bc)
+
+    def test_missing_or_other_project(self):
+        with self.assertRaises(P.Fail):
+            P.board_from_manifest(self.MAN, "other", "tstat", "o/r")
+        with self.assertRaises(P.Fail):
+            P.board_from_manifest(self.MAN, "test-g4", "elsewhere", "o/r")
+        with self.assertRaises(P.Fail):
+            P.board_from_manifest(None, "test-g4", "tstat", "o/r")
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
