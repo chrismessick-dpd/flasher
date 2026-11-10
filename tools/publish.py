@@ -5,6 +5,7 @@ client details live in this public repo):
 
     {
       "data_repo": "owner/name",                     the private data repo (Flasher reads it)
+      "project": { "id": ..., "name": ... },        what People & access shares (default: the board)
       "board": { "id": ..., "name": ..., "flash": {"base", "size"}, "ram": {"base", "size"},
                  "dfu": {"vid", "pid", "name"}, "run": {"vid", "pid", "name"}, "touchBaud": 1200,
                  "manualDfu": [steps], "notes": "...", "mcu": "..." },
@@ -116,8 +117,9 @@ def dump(m):
     return (json.dumps(m, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def plan_manifest(old_bytes, board, entries, now):
+def plan_manifest(old_bytes, board, entries, now, project=None):
     """The new manifest and which entries changed. old_bytes is None for a repo without one.
+    project: (id, name) to record in the manifest's projects map, or None.
     Returns (new_bytes, changed_ids, board_changed). Raises Fail if the change isn't provably additive."""
     old = json.loads(old_bytes) if old_bytes else {"format": 1, "boards": {}, "firmware": []}
     if old_bytes and dump(old) != old_bytes:
@@ -132,6 +134,12 @@ def plan_manifest(old_bytes, board, entries, now):
     bdef = {k: v for k, v in board.items() if k != "id"}
     board_changed = new["boards"].get(bid) != bdef
     new["boards"][bid] = bdef
+    proj_changed = False
+    if project:
+        pid, pname = project
+        if (new.get("projects") or {}).get(pid) != {"name": pname}:
+            new.setdefault("projects", {})[pid] = {"name": pname}
+            proj_changed = board_changed = True
     changed = []
     for e in entries:
         i = next((k for k, f in enumerate(new["firmware"]) if f.get("id") == e["id"] and f.get("board") == bid), None)
@@ -158,6 +166,14 @@ def plan_manifest(old_bytes, board, entries, now):
         olds = {f.get("id"): f for f in old.get("firmware", []) if f.get("board") == bid}
         back["firmware"] = [olds[f["id"]] if f.get("board") == bid and f["id"] in olds else f
                             for f in back["firmware"] if not (f.get("board") == bid and f["id"] in changed and f["id"] not in olds)]
+        if proj_changed:
+            pid = project[0]
+            if pid in old.get("projects", {}):
+                back["projects"][pid] = old["projects"][pid]
+            elif "projects" in old:
+                del back["projects"][pid]
+            else:
+                del back["projects"]
         if "updated" in old:
             back["updated"] = old["updated"]
         else:
@@ -210,10 +226,19 @@ def read_repo(full, tok):
     if listing.get("truncated"):
         raise Fail("the data repo's tree listing is truncated; too many files to check safely")
     entries = {e["path"]: e["sha"] for e in listing["tree"] if e["type"] == "blob"}
-    manifest = None
-    if "manifest.json" in entries:
-        manifest = base64.b64decode(gh("GET", f"/repos/{full}/git/blobs/{entries['manifest.json']}", tok)["content"])
-    return {"head": head, "tree": tree, "entries": entries, "manifest": manifest}
+    def blob(path):
+        return base64.b64decode(gh("GET", f"/repos/{full}/git/blobs/{entries[path]}", tok)["content"]) if path in entries else None
+    return {"head": head, "tree": tree, "entries": entries, "manifest": blob("manifest.json"), "users": blob("users.json")}
+
+
+def home_of(roster_bytes, pid, data_full):
+    """Where a project's firmware lives: its own repo once it's shared with someone outside (Flasher's
+    People & access records that in flasher_data's users.json), else the data repo."""
+    try:
+        shared = (json.loads(roster_bytes) if roster_bytes else {}).get("shared", {}).get(pid) or {}
+    except ValueError:
+        raise Fail("users.json in the data repo isn't valid JSON")
+    return shared["repo"] if shared.get("repo") and not shared.get("deleted") else data_full
 
 
 # ── The source repo ──
@@ -256,6 +281,12 @@ def main(argv=None):
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     board, full = cfg["board"], cfg["data_repo"]
     bid = board["id"]
+    # The project the board belongs to: what People & access shares (README, *Access*).
+    proj = cfg.get("project") or {}
+    pid, pname = proj.get("id") or board.get("project") or bid, proj.get("name") or board.get("name", bid)
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", pid):
+        raise Fail(f"project id {pid!r} may only use a-z, 0-9, _ and -")
+    board = dict(board, project=pid)
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,47}", bid):
         raise Fail(f"board id {bid!r} may only use a-z, 0-9, _ and -")
     for k in ("flash", "ram", "dfu"):
@@ -331,7 +362,7 @@ def main(argv=None):
         })
 
     print(f"\nSource   {repo_name} @ {sha[:10]}  ({src})")
-    print(f"Board    {bid}: {board.get('name', bid)}")
+    print(f"Board    {bid}: {board.get('name', bid)}  (project {pid}: {pname})")
     print(f"Data     {full}")
     for w in warnings:
         print("  warning: " + w)
@@ -342,18 +373,26 @@ def main(argv=None):
 
     tok = token()
     repo = read_repo(full, tok)
+    if "missing" not in repo:
+        home = home_of(repo["users"], pid, full)
+        if home != full:
+            # Shared with a client or contractor: the project's firmware lives in its own repo now.
+            print(f"Target   {home}  (the project is shared; its firmware lives there)")
+            full, repo = home, read_repo(home, tok)
+            if "missing" in repo:
+                raise Fail(f"{home} is {repo['missing']}; check Flasher's People & access")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     clean = [{k: v for k, v in e.items() if k != "_bytes"} for e in entries]
     if "missing" in repo:
         print(f"\n{full} is {repo['missing']}. A first publish would write:")
-        new_bytes, changed, _ = plan_manifest(None, board, clean, now)
+        new_bytes, changed, _ = plan_manifest(None, board, clean, now, (pid, pname))
         for e in entries:
             print(f"  new        {e['path']:<40} {e['size']:>8} bytes  {e['summary'][:60]}")
         print(f"  manifest.json ({len(new_bytes)} bytes)")
         print("\nCreate the repo (private, with a README) before pushing.")
         return 0 if not a.push else 1
 
-    new_bytes, changed, board_changed = plan_manifest(repo["manifest"], board, clean, now)
+    new_bytes, changed, board_changed = plan_manifest(repo["manifest"], board, clean, now, (pid, pname))
     files = {}
     print(f"\nPlan against {full} @ {repo['head'][:10]}:")
     for e in entries:

@@ -169,5 +169,86 @@
     return port;
   }
 
-  FL.fakeusb = { device: device, serialPort: serialPort };
+  /* A firmware console that edits its own line, the way a board's own console can: it echoes, keeps
+     history (Up/Down, Ctrl-P/N), moves (Left/Right, Home/End, Ctrl-A/E), erases (Backspace, Delete,
+     Ctrl-U), completes with Tab, clears with Ctrl-L and `clear`, and redraws its line with
+     \r <prompt> <line> ESC[K ESC[nD. opts: { name, banner, onData(text), commands: { name: fn(args, sh) } }.
+     input(text) takes what the terminal sends; start() prints the banner and the prompt; stop(). */
+  function shell(opts) {
+    var line = '', cur = 0, hist = [], back = 0, saved = '', esc = 0, param = '', watch = 0;
+    var emit = function (t) { opts.onData(t); };
+    var prompt = function () { return (opts.name || 'demo') + '> '; };
+    function redraw() { emit('\r' + prompt() + line + '\x1b[K' + (line.length > cur ? '\x1b[' + (line.length - cur) + 'D' : '')); }
+    function set(s) { line = s; cur = s.length; redraw(); }
+    function histMove(older) {
+      if (older ? back >= hist.length : back === 0) return;
+      if (back === 0) saved = line;
+      back += older ? 1 : -1;
+      set(back === 0 ? saved : hist[hist.length - back]);
+    }
+    var commands = Object.assign({
+      help: function () { return 'Commands: ' + Object.keys(commands).sort().join(', ') + '\r\nkeys: Tab completes, Up/Down history, Left/Right/Home/End move, Ctrl-U erases, Ctrl-L redraws.'; },
+      clear: function () { emit('\x1b[2J\x1b[H'); return 'OK'; },
+      watch: function () { var n = 0; watch = setInterval(function () { n++; emit('\r\x1b[K' + 'watch ' + n + '  T=' + (21.4 + Math.sin(n / 3) * 0.2).toFixed(2) + ' °C'); }, 200); return null; }
+    }, opts.commands || {});
+    function run(text) {
+      var parts = text.trim().split(/\s+/), name = parts[0];
+      if (!name) return;
+      var fn = commands[name.toLowerCase()];
+      var out = fn ? fn(parts.slice(1), api) : 'ERR unknown command: ' + name + ' (try help)';
+      if (out !== null && out !== undefined) emit(out + '\r\n');
+    }
+    function stopWatch() { clearInterval(watch); watch = 0; emit('\r\x1b[K' + 'OK watch stopped\r\n' + prompt()); }
+    function key(ch) {
+      if (watch) { stopWatch(); return; }
+      if (esc === 1) { esc = ch === '[' ? 2 : 0; param = ''; return; }
+      if (esc === 2) {
+        if (/[0-9]/.test(ch)) { param += ch; return; }
+        esc = 0;
+        if (ch === 'A') histMove(true); else if (ch === 'B') histMove(false);
+        else if (ch === 'C' && cur < line.length) { cur++; emit('\x1b[C'); }
+        else if (ch === 'D' && cur > 0) { cur--; emit('\x1b[D'); }
+        else if (ch === 'H') { cur = 0; redraw(); } else if (ch === 'F') { cur = line.length; redraw(); }
+        else if (ch === '~' && param === '3' && cur < line.length) { line = line.slice(0, cur) + line.slice(cur + 1); redraw(); }
+        return;
+      }
+      var c = ch.charCodeAt(0);
+      if (c === 27) { esc = 1; return; }
+      if (ch === '\r' || ch === '\n') {
+        emit('\r\n');
+        var text = line;
+        if (text.trim() && hist[hist.length - 1] !== text) hist.push(text);
+        line = ''; cur = 0; back = 0;
+        run(text);
+        if (!watch) emit(prompt());
+        return;
+      }
+      if (c === 0x7f || c === 8) { if (cur > 0) { line = line.slice(0, cur - 1) + line.slice(cur); cur--; redraw(); } return; }
+      if (c === 1) { cur = 0; redraw(); return; }
+      if (c === 5) { cur = line.length; redraw(); return; }
+      if (c === 3) { emit('^C\r\n' + prompt()); line = ''; cur = 0; back = 0; return; }
+      if (c === 12) { emit('\x1b[2J\x1b[H'); redraw(); return; }
+      if (c === 16) { histMove(true); return; }
+      if (c === 14) { histMove(false); return; }
+      if (c === 21) { line = line.slice(cur); cur = 0; redraw(); return; }
+      if (ch === '\t') {
+        var hits = Object.keys(commands).filter(function (k) { return k.indexOf(line) === 0; });
+        if (hits.length === 1) set(hits[0] + ' ');
+        else if (hits.length > 1) { emit('\r\n' + hits.sort().join('  ') + '\r\n'); redraw(); }
+        return;
+      }
+      if (c < 0x20) return;
+      line = line.slice(0, cur) + ch + line.slice(cur); cur++;
+      if (cur === line.length) emit(ch); else redraw();
+    }
+    var api = {
+      input: function (text) { for (var i = 0; i < text.length; i++) key(text.charAt(i)); },
+      start: function () { emit((opts.banner || '') + '\r\n' + prompt()); },
+      stop: function () { clearInterval(watch); watch = 0; },
+      emit: emit
+    };
+    return api;
+  }
+
+  FL.fakeusb = { device: device, serialPort: serialPort, shell: shell };
 })(window.FL = window.FL || {});

@@ -57,9 +57,16 @@
       if (!self.closing) self.close();
     });
   };
+  // Keys are sent one write each, in order: each waits for the one before.
   Console.prototype.send = function (text) {
-    var w = this.port.writable.getWriter();
-    return w.write(new TextEncoder().encode(text)).then(function () { w.releaseLock(); }, function (e) { w.releaseLock(); throw e; });
+    var port = this.port;
+    if (!port) return Promise.reject(new Error('The console is closed.'));
+    var job = (this.writing || Promise.resolve()).catch(function () {}).then(function () {
+      var w = port.writable.getWriter();
+      return w.write(new TextEncoder().encode(text)).then(function () { w.releaseLock(); }, function (e) { w.releaseLock(); throw e; });
+    });
+    this.writing = job;
+    return job;
   };
   Console.prototype.close = function () {
     var self = this, port = this.port;

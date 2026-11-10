@@ -6,33 +6,33 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 
 ## Status (2026-11-10)
 
-- **Prototype.** Repos created 2026-11-10 at Chris's OK: `chrismessick-dpd/flasher` (public; Pages
-  from `main` once Chris turns it on) and `chrismessick-dpd/flasher_data` (private, a README only,
-  Actions off). The hub links to it as a prototype.
-- **The name is Flasher** (Chris, 2026-11-10).
-- **Access** should work the way it does in the rest of the suite (Chris, 2026-11-10; a later step).
-  For now the page reads `flasher_data` with whatever `signoff.token` the browser has.
-- **Never tried on a real board.** The DfuSe code is tested against `assets/fakeusb.js`, which
-  follows dfu-util's request sequence and the ROM's rules as documented. Not yet seen on real
-  hardware:
-  - the ROM's real answers;
-  - Chrome's `interfaceName` on the DFU alternates;
-  - the 1200-baud touch on a real board;
-  - the Windows driver story.
-- **The first real publish** is next (the data repo exists). The dry run works
-  (`python tools/publish.py --no-build`).
+- **Prototype, in use.** Repos created 2026-11-10 at Chris's OK: `chrismessick-dpd/flasher` (public,
+  Pages on) and `chrismessick-dpd/flasher_data` (private, Actions off). The hub links to it as a
+  prototype. The name is Flasher (Chris).
+- **Published and flashed.** The client board's nine examples were published 2026-11-10 (`flasher_data`
+  `f08066f`), and Chris flashed Blink onto a real board from the hosted page: the ROM, the
+  1200-baud restart, and the Windows driver all worked.
+- **Access (2026-11-10, Chris):** Flasher keeps its own repos and People list ("one tool, one data
+  repo set"), not tied to Signoff PL. FTEs see everything; clients and contractors see the projects
+  shared with them, each in `review-flasher-<project>` (README, *Access*; `assets/access.js`). Tried
+  against `tests/fakegithub.js` and in the page with a fake GitHub; no real share yet. The live
+  manifest has no `projects` map until the next publish (its dry run adds the project).
+- **Console (2026-11-10, Chris):** a terminal (`assets/term.js`), so the board's own line editing
+  works (history, Tab, Ctrl-L, `clear`). Flash and Console are tabs of one panel; About folds.
+  Tried in `?demo` against `FL.fakeusb.shell`; not yet against the board.
 
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:
   - Board details (names, USB product strings, button steps) live in the private manifest, and in
     `flasher.json` in the firmware's own repo.
-  - The firmware itself lives only in the data repo.
+  - The firmware itself lives only in Flasher's private repos.
   - Grep for `etna|koya|1100200|1100201`, and for the client board's name, before any commit.
   - `tools/publish.local.json` is git-ignored because it holds a local path.
 - **The demo is the Smart Thermostat** (`tstat-main`, Main PCBA). Its images are generated in
   `catalog.js` (`makeImage`), and it flashes `FL.fakeusb` in the page.
-- **Tokens.** The page uses the suite's `signoff.token` (session or local storage), read-only.
+- **Tokens.** The page uses the suite's `signoff.token` (session or local storage). It reads, and
+  for an FTE on People & access it writes `users.json`, creates `review-flasher-*` repos, and invites.
   `publish.py` reads `../ee_tools_token.txt` and never prints it. A push needs the dry run's
   `--confirm` code. Show Chris the dry run first.
 - **Engine copies.**
@@ -60,12 +60,25 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 - `wTransferSize` is read from the configuration descriptor (2048 if that fails).
 - A refused first set-address is reported as possible read protection (RDP).
 
+## Access details that matter
+
+- **The order of a share** (`FL.access.share`): create the repo (or adopt it if it's empty or already
+  holds this project), turn Actions off, copy the images and the project's manifest, check every copy
+  by git blob SHA, record `shared[project]` in `users.json`, and only then remove the originals from
+  `flasher_data`.
+- **Manifests stay in `publish.py`'s layout** (`FL.access.dump`: 2-space JSON and a newline), so its
+  additive proof still holds after the page moves a project.
+- **Saving `users.json`** re-reads it and merges (`model.mergeRosters`, newer wins per entry) before
+  writing.
+- **Invitations.** A new repo leaves the other FTEs with only an invitation. The page offers waiting
+  invitations (Accept) and doesn't count those repos as errors.
+
 ## Before finishing a change
 
 1. Run `python tools/stamp_version.py`.
 2. Serve the tools folder with preview `signoff-suite-alt` (port 8774), and open
-   `flasher/tests/test.html`. It should show PASS (30 tests as of 2026-11-10).
-3. Run `python tests/test_publish.py` (11 tests).
+   `flasher/tests/test.html`. It should show PASS (42 tests as of 2026-11-10).
+3. Run `python tests/test_publish.py` (13 tests).
 4. Check `flasher/index.html?demo` and flash something: the simulated flash takes about 5 s.
 5. In the browser pane, scripts are cached: fetch changed files with `{cache: 'reload'}` before
    reloading.

@@ -72,11 +72,42 @@
 .fl-manual { margin: 16px 0 0; }
 .fl-manual p { margin: 8px 0 0; }
 
-.fl-console {
-  margin: 0; font: 12.5px/1.5 var(--mono); background: var(--bg-sunk); border-radius: 10px; padding: 10px 12px;
-  height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+/* About this firmware: a card that folds to its title and summary */
+.fl-about { margin: 0 0 18px; }
+.fl-about summary { display: flex; align-items: center; gap: 12px; padding: 14px 20px; cursor: pointer; list-style: none; }
+.fl-about summary::-webkit-details-marker { display: none; }
+.fl-about-title { font: 600 15px var(--display); letter-spacing: -0.01em; flex: none; }
+.fl-about-sum { color: var(--text-3); font-size: 13px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-about[open] .fl-about-sum { visibility: hidden; }
+.fl-chev { width: 16px; height: 16px; flex: none; color: var(--text-3); transform: rotate(-90deg); transition: transform 0.2s var(--ease); }
+.fl-about[open] .fl-chev { transform: none; }
+.fl-about .fl-desc { padding: 0 20px 18px; }
+
+/* Flash and Console: one panel, two tabs */
+.fl-panel { margin-bottom: 22px; overflow: hidden; }
+.fl-tabs { display: flex; gap: 4px; padding: 10px 14px 0; border-bottom: 1px solid var(--hair); }
+.fl-tabs button {
+  position: relative; display: inline-flex; align-items: center; gap: 7px; border: none; background: none; color: var(--text-2);
+  font: 600 14px var(--display); padding: 9px 12px 11px; cursor: pointer; border-radius: 8px 8px 0 0;
 }
-.card form.fl-row { margin-top: 10px; }
+.fl-tabs button:hover { color: var(--text); background: var(--hair); }
+.fl-tabs button.on { color: var(--accent-ink); }
+.fl-tabs button.on::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+.fl-live { width: 7px; height: 7px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 3px var(--pass-soft); }
+.fl-tab-body { padding: 18px 20px; }
+
+/* The console: a terminal the board draws in */
+.fl-con-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.fl-con-status { font-size: 13px; color: var(--text-2); }
+.fl-term {
+  height: 380px; overflow: auto; border-radius: 10px; padding: 10px 12px; cursor: text; outline: none;
+  background: #0d1117; color: #e6edf3; box-shadow: inset 0 0 0 1px var(--hair-2);
+}
+.fl-term:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.fl-term pre { margin: 0; font: 12.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; min-height: 100%; }
+.fl-cur { background: #e6edf3; color: #0d1117; animation: fl-blink 1.1s steps(1) infinite; }
+@keyframes fl-blink { 50% { background: transparent; color: inherit; } }
+@media (prefers-reduced-motion: reduce) { .fl-cur { animation: none; } }
 
 /* Help sheet prose */
 .fl-prose h3 { font: 600 14.5px var(--display); margin: 16px 0 4px; }
@@ -86,3 +117,17 @@
 .fl-prose ul { padding-left: 20px; margin: 4px 0 6px; }
 .fl-prose .fl-mono { word-break: break-all; }
 .fl-prose .log { max-height: none; white-space: pre-wrap; word-break: break-all; }
+.fl-term { position: relative; }
+.fl-term:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+.fl-term-in { position: absolute; left: 12px; bottom: 10px; width: 1px; height: 1em; opacity: 0; border: 0; padding: 0; resize: none; overflow: hidden; font-size: 16px; }
+
+/* People & access */
+.fl-small { padding: 2px 8px; font-size: 12px; }
+.fl-good-text { color: var(--pass); }
+.fl-head-acts { margin-top: 0; flex: none; }
+@media (max-width: 600px) {
+  .fl-tab-body { padding: 14px; }
+  .fl-term { height: 55vh; }
+  .fl-about summary { padding: 12px 14px; }
+  .fl-about .fl-desc { padding: 0 14px 14px; }
+}

@@ -97,6 +97,30 @@ class PlanManifest(unittest.TestCase):
         other = P.plan_manifest(None, BOARD, [entry("blink", desc="Different.")], NOW)[0]
         self.assertNotEqual(code, P.confirm_code("c0ffee", {"manifest.json": other, "firmware/test-g4/blink.bin": bin_a}))
 
+    def test_project_recorded_and_proven(self):
+        old, _, _ = P.plan_manifest(None, BOARD, [entry("blink")], NOW)              # no projects map yet
+        new, changed, bc = P.plan_manifest(old, dict(BOARD, project="gen"), [entry("blink")], LATER, ("gen", "Thermostat"))
+        m = json.loads(new)
+        self.assertTrue(bc)
+        self.assertEqual(changed, [])
+        self.assertEqual(m["projects"], {"gen": {"name": "Thermostat"}})
+        self.assertEqual(m["boards"]["test-g4"]["project"], "gen")
+        same, changed, bc = P.plan_manifest(new, dict(BOARD, project="gen"), [entry("blink")], LATER, ("gen", "Thermostat"))
+        self.assertEqual((same, changed, bc), (new, [], False))
+        renamed, _, bc = P.plan_manifest(new, dict(BOARD, project="gen"), [entry("blink")], LATER, ("gen", "Thermostat 2"))
+        self.assertTrue(bc)
+        self.assertEqual(json.loads(renamed)["projects"]["gen"]["name"], "Thermostat 2")
+
+    def test_home_of(self):
+        roster = json.dumps({"schema": 1, "users": {}, "shared": {
+            "gen": {"id": "gen", "repo": "o/review-flasher-gen"}, "old": {"id": "old", "repo": "o/review-flasher-old", "deleted": True}}}).encode()
+        self.assertEqual(P.home_of(roster, "gen", "o/flasher_data"), "o/review-flasher-gen")
+        self.assertEqual(P.home_of(roster, "old", "o/flasher_data"), "o/flasher_data")
+        self.assertEqual(P.home_of(roster, "other", "o/flasher_data"), "o/flasher_data")
+        self.assertEqual(P.home_of(None, "gen", "o/flasher_data"), "o/flasher_data")
+        with self.assertRaises(P.Fail):
+            P.home_of(b"{not json", "gen", "o/flasher_data")
+
     def test_git_blob_sha(self):
         self.assertEqual(P.git_blob_sha(b"hello\n"), "ce013625030ba8dba906f756967f9e9ca394464a")
 

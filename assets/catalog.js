@@ -28,26 +28,27 @@
 
   /* The catalog from the data repo: resolves { boards, firmware, problems, fetch(entry) → bytes, head }.
      fetchImpl is for tests. */
+  /* Everything this token may flash (assets/access.js): an FTE's flasher_data plus every shared
+     project repo, or only the review-flasher-* repos shared with a client or contractor.
+     Resolves the combined catalog, with fte, login, roster, and access (what was loaded). */
   function loadRepo(token, fetchImpl) {
-    var cfg = FL.config;
-    var store = new window.Signoff.GitHubStore({ owner: cfg.owner, repo: cfg.repo, branch: cfg.branch, dataPath: '', token: token }, fetchImpl);
-    return store.snapshot().then(function (snap) {
-      var entries = snap.entries.filter(function (e) { return e.type === 'blob'; }).map(function (e) { return { path: e.path, sha: e.sha, size: e.size }; });
-      return store.readBytes('manifest.json', entries).then(function (bytes) {
-        if (!bytes) {
-          var e0 = new Error(cfg.owner + '/' + cfg.repo + ' has no manifest.json yet. Nothing has been published.'); e0.code = 'empty'; throw e0;
-        }
-        var m;
-        try { m = JSON.parse(new TextDecoder().decode(bytes)); } catch (e) { var e1 = new Error('manifest.json isn’t valid JSON: ' + e.message); e1.code = 'bad'; throw e1; }
-        var c = I.cleanManifest(m);
-        c.head = snap.head; c.updated = typeof m.updated === 'string' ? m.updated : '';
-        c.source = cfg.owner + '/' + cfg.repo;
-        c.fetch = function (f) { return store.readVerified(f.path, f.sha256, entries); };
-        return c;
-      });
+    var cfg = FL.config, A = FL.access;
+    return A.load({ token: token, fetch: fetchImpl }).then(function (loaded) {
+      var c = A.combine(loaded);
+      c.fte = loaded.fte; c.login = loaded.login; c.roster = loaded.roster; c.access = loaded; c.invites = loaded.invites;
+      loaded.errors.forEach(function (e) { c.problems.push(e); });
+      if (!loaded.fte && !loaded.repos.length) {
+        var e0 = new Error(loaded.invites.length
+          ? 'You’ve been invited to firmware on GitHub. Accept the invitation to see it.'
+          : 'No firmware is shared with you yet. Ask the person who invited you to add you to a project in Flasher’s People & access.');
+        e0.code = loaded.invites.length ? 'invited' : 'none'; e0.invites = loaded.invites; throw e0;
+      }
+      if (loaded.fte && !loaded.repos.some(function (r) { return r.raw; })) {
+        var e1 = new Error(A.dataFull() + ' has no manifest.json yet. Nothing has been published.'); e1.code = 'empty'; e1.catalog = c; throw e1;
+      }
+      return c;
     }).catch(function (e) {
       if (e.status === 401) e.message = 'GitHub refused the saved token. Sign in again.';
-      else if (e.status === 404) e.message = cfg.owner + '/' + cfg.repo + ' wasn’t found, or your token can’t open it. Ask Chris for read access.';
       else if (e.status === 403) e.message = 'GitHub said no (' + e.message + '). The token may lack read access to ' + cfg.repo + ', or the hourly limit is used up.';
       throw e;
     });

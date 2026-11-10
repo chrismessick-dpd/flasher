@@ -3,8 +3,11 @@
 Flash prebuilt firmware onto a board from Chrome or Edge, with no Arduino IDE. Pick the firmware,
 plug the board in by USB, and click **Flash board**. Part of the Dovetail Signoff suite.
 
-- **Real use:** the firmware list and images come from a private data repo, read with the suite's
-  GitHub sign-in. Every image is checked against its SHA-256 before it's flashed.
+- **Real use:** the firmware list and images come from Flasher's private repos, read with the suite's
+  GitHub sign-in. FTEs see every project; clients and contractors see only the projects shared with
+  them (*Access*). Every image is checked against its SHA-256 before it's flashed.
+- **Flash and Console** are two tabs of one panel. The console is a terminal on the board's USB serial
+  port (*The console*).
 - **`?demo`:** the suite's made-up Smart Thermostat for Acme Climate. It flashes a board simulated
   in the page, so it runs anywhere and touches no USB.
 - **Open a .bin file…** flashes a file from this computer.
@@ -62,13 +65,59 @@ computer:
 The page's *Windows driver help* says the same. macOS needs nothing; Linux needs a udev rule (in
 the page).
 
-## The data repo
+## Access
+
+Flasher keeps its own data, like each tool in the suite ("one tool, one data repo set"), with its own
+People list. It isn't tied to Signoff PL's sharing.
+
+- **`flasher_data`** (FTEs only) holds `users.json` (the People list, in the Signoff engine's roster
+  format: `users[login] = { name, role, projects }`, `shared[project] = { repo, name }`) and every
+  project that no one outside the team has been given.
+- **`review-flasher-<project>`**, one private repo per shared project, holds that project's
+  `manifest.json` and `firmware/`. Its collaborators are the FTEs and that project's clients and
+  contractors.
+- **Who sees what.** GitHub enforces it. An FTE is anyone whose token opens `flasher_data`; the page
+  then reads it and every shared repo it lists. Anyone else sees the `review-flasher-*` repos their
+  token can list. An invitation not yet accepted is offered on the page with an Accept button.
+- **People & access** (sidebar, FTEs only) works like Signoff EE's People page:
+  - Add person: name, GitHub username, and role (FTE, Client, or Contractor; a client and a contractor
+    get the same access).
+  - An FTE is invited to `flasher_data` and every shared repo.
+  - Giving a client or contractor a project moves that project out of `flasher_data` into its own
+    repo the first time (`FL.access.share`), and invites the FTEs and them. The move copies, checks the
+    copy, records it in `users.json`, and only then removes the originals.
+  - Taking a project away, changing a role, or removing a person takes back the access it gave.
+  - Each row's GitHub access says Has access, Invited, or what's missing, with Fix.
+  - On a personal account only the owner (`chrismessick-dpd`) can create repos and invite.
+- **Projects.** A project is a set of boards: a board's `project` (else the board itself), named in the
+  manifest's `projects` map. The firmware repo's `flasher.json` sets it (`project`).
+
+## The console
+
+The Console tab is a small terminal (`assets/term.js`) on the board's USB serial port, opened at
+115200 baud (never 1200, which restarts the board into its bootloader). Every key goes to the board as a
+terminal sends it, so a firmware console that edits its own line works as it does in PuTTY: Up and Down recall history, Tab completes, Ctrl-L redraws, and `clear` clears.
+- **Keys.** Ctrl-C copies when text is selected, else goes to the board. Paste sends the text, with
+  each line end as Enter.
+- **Drawing.** The terminal draws `
+`, `
+`, backspace, tabs, erase in line and in screen, and
+  cursor moves. Colors and other sequences are dropped.
+- **Typing.** Keys go through a hidden text field, as in xterm.js, so phone keyboards, dictation, and
+  input methods work.
+- **Clear** clears only the window.
+- **Flashing** closes the console first, since the restart into DFU mode needs the port.
+
+## The data repos
+
+`flasher_data` and each shared project's repo (`FL.config` in `assets/catalog.js`):
 
 A private repo, `chrismessick-dpd/flasher_data` (`FL.config` in `assets/catalog.js`):
 
 ```
 manifest.json
 firmware/<board>/<id>.bin
+users.json            flasher_data only: the People list
 ```
 
 `manifest.json`, format 1:
@@ -77,9 +126,10 @@ firmware/<board>/<id>.bin
 {
   "format": 1,
   "updated": "2026-11-10T12:00:00Z",
+  "projects": { "<project id>": { "name": "…" } },
   "boards": {
     "<board id>": {
-      "name": "…", "mcu": "…",
+      "name": "…", "mcu": "…", "project": "<project id>",
       "flash": { "base": "0x08000000", "size": "0x80000" },
       "ram":   { "base": "0x20000000", "size": "0x1C000" },
       "dfu":   { "vid": "0x0483", "pid": "0xDF11", "name": "DFU in FS Mode" },
@@ -109,9 +159,11 @@ firmware/<board>/<id>.bin
 
 ## Publishing firmware
 
-`tools/publish.py` builds a firmware repo's examples and commits them to the data repo. The firmware
-repo describes itself in a `flasher.json` at its sketchbook root:
+`tools/publish.py` builds a firmware repo's examples and commits them to their project's repo:
+`flasher_data`, or the project's `review-flasher-*` repo once it's shared (from `users.json`). The
+firmware repo describes itself in a `flasher.json` at its sketchbook root:
 - `data_repo`;
+- `project` (`{ "id", "name" }`; default: the board);
 - `board` (as in the manifest, plus `id`);
 - `examples` (a folder of `<Name>/<Name>.ino` sketches);
 - `depends` (what every sketch builds against, such as the board package; counted in the dirty and stale checks);
@@ -143,7 +195,8 @@ The code ties `--confirm` to exactly the files the dry run showed. The data repo
 first commit; the dry run works before it does and shows what the first publish would write.
 
 A GitHub Actions workflow can run the same script with `--push --ci` (allowed only inside Actions)
-and a repo secret holding a fine-grained token for the data repo (Contents: read and write).
+and a repo secret holding a fine-grained token for Flasher's repos (Contents: read and write). Once a
+project is shared, its `review-flasher-*` repo must be among the token's repositories too.
 
 ## Files
 
@@ -152,13 +205,15 @@ and a repo secret holding a fine-grained token for the data repo (Contents: read
 | `index.html` | The page; CSP allows scripts from this site and `connect-src` to GitHub's API only |
 | `assets/dfuse.js` | DfuSe over WebUSB: layout and descriptor parsing, erase, write, read, and leave |
 | `assets/image.js` | Image checks, SHA-256, and manifest validation; the generic STM32 board for local files |
-| `assets/serial.js` | The 1200-baud touch, and the console |
-| `assets/fakeusb.js` | A simulated STM32 ROM bootloader and serial port (tests and `?demo`) |
-| `assets/catalog.js` | Sign-in (`signoff.token`), reading the data repo, and the demo catalog |
+| `assets/serial.js` | The 1200-baud touch, and the serial port under the console |
+| `assets/term.js` | The console's terminal: the screen, escape codes, and the keys |
+| `assets/access.js` | Access: reading by role, the People list, sharing a project, and invitations |
+| `assets/fakeusb.js` | A simulated STM32 ROM bootloader, serial port, and firmware console (tests and `?demo`) |
+| `assets/catalog.js` | Sign-in (`signoff.token`), loading the catalog, and the demo catalog |
 | `assets/app.js` | The UI |
 | `assets/styles.css` | Flasher's styles; `assets/suite.css` is Signoff EE's (`tools/sync_suite_css.py`) |
 | `assets/vendor/` | The Signoff engine's `model.js` and `github.js` (`tools/sync_vendor.py`) |
 | `tools/publish.py` | Build and publish (above) |
 | `tools/stamp_version.py` | Stamps `assets/version.js` |
-| `tests/test.html` | Browser tests against the simulated bootloader; the title becomes PASS or FAIL |
+| `tests/test.html` | Browser tests against the simulated bootloader and `tests/fakegithub.js`; the title becomes PASS or FAIL |
 | `tests/test_publish.py` | `python tests/test_publish.py` |

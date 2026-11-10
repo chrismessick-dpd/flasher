@@ -219,50 +219,197 @@
     });
   });
 
+  // ── The console terminal ──
+  var T = FL.term;
+  test('terminal: lines, carriage return, backspace, and erase to end of line', function () {
+    var s = new T.Screen();
+    s.write('hello\r\nworld\rW');
+    eq(s.text(), 'hello\nWorld');
+    s.write('\x1b[K');
+    eq(s.text(), 'hello\nW', 'ESC[K cuts after the cursor');
+    s.write('ab\bX');
+    eq(s.text(), 'hello\nWaX');
+  });
+  test('terminal: cursor left and right, and a redrawn line', function () {
+    var s = new T.Screen();
+    s.write('gen> status\x1b[3D');           // cursor on the "t" of "tus"
+    eq(s.col, 8);
+    s.write('\rgen> pwm on\x1b[K\x1b[2D');   // a history recall redraws the line
+    eq(s.text(), 'gen> pwm on'); eq(s.col, 9);
+    s.write('\x1b[C'); eq(s.col, 10);
+  });
+  test('terminal: ESC[2J ESC[H clears, and other sequences are dropped, not drawn', function () {
+    var s = new T.Screen();
+    s.write('one\r\ntwo\r\n\x1b[2J\x1b[Hthree\x1b[1;32m!\x1b[0m\x1b[?25l\x1b]0;title\x07');
+    eq(s.text(), 'three!');
+  });
+  test('terminal: tabs, long scrollback trimmed', function () {
+    var s = new T.Screen({ max: 50 });
+    s.write('a\tb\r\n');
+    eq(s.text().split('\n')[0], 'a       b');
+    for (var i = 0; i < 200; i++) s.write('line ' + i + '\r\n');
+    ok(s.lines.length <= 50, 'kept ' + s.lines.length); ok(/line 199/.test(s.text()), 'newest kept');
+  });
+  test('terminal: html escapes and draws the cursor', function () {
+    var s = new T.Screen();
+    s.write('<b>&');
+    eq(s.html(false), '&lt;b&gt;&amp;');
+    ok(/<span class="fl-cur"> <\/span>$/.test(s.html(true)), 'cursor after the text');
+  });
+  test('keyBytes: what a terminal sends', function () {
+    var k = function (key, mods) { return T.keyBytes(Object.assign({ key: key }, mods || {}), false); };
+    eq(k('Enter'), '\r'); eq(k('Backspace'), '\x7f'); eq(k('Tab'), '\t'); eq(k('ArrowUp'), '\x1b[A'); eq(k('ArrowDown'), '\x1b[B');
+    eq(k('ArrowLeft'), '\x1b[D'); eq(k('Home'), '\x1b[H'); eq(k('Delete'), '\x1b[3~'); eq(k('x'), 'x'); eq(k('Shift'), null);
+    eq(k('c', { ctrlKey: true }), '\x03'); eq(k('l', { ctrlKey: true }), '\x0c'); eq(k('v', { ctrlKey: true }), null, 'paste is the browser’s');
+    eq(T.keyBytes({ key: 'c', ctrlKey: true }, true), null, 'Ctrl-C copies a selection');
+    eq(k('r', { metaKey: true }), null);
+  });
+  test('console: typing, history with Up, Tab completion, and clear, through the terminal', function () {
+    var s = new T.Screen(), sh = F.shell({ name: 'gen', banner: 'Banner', onData: function (t) { s.write(t); }, commands: { status: function () { return 'OK idle'; } } });
+    sh.start();
+    sh.input('stat\t');                       // Tab completes "status "
+    eq(s.text().split('\n').pop(), 'gen> status');
+    sh.input('\r');
+    ok(/OK idle\ngen>$/.test(s.text()), 'ran it: ' + JSON.stringify(s.text()));
+    sh.input('hel'); sh.input('\x7f\x7f\x7f');
+    eq(s.text().split('\n').pop(), 'gen>', 'backspace erased');
+    sh.input('\x1b[A');                       // Up: the last command comes back
+    eq(s.text().split('\n').pop(), 'gen> status');
+    sh.input('\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\x1b[DX');   // edit mid-line
+    eq(s.text().split('\n').pop(), 'gen> Xstatus');
+    sh.input('\x1b[F\x15clear\r');            // End, Ctrl-U (erases to the left), then clear
+    eq(s.text(), 'OK\ngen>');
+  });
+
   // ── The catalog ──
-  // A fake GitHub holding one repo: just enough of the git data API for GitHubStore.snapshot and blobs.
-  function fakeGitHub(files) {
-    var blobs = {}, tree = [];
-    return Promise.all(Object.keys(files).map(function (p) {
-      var bytes = typeof files[p] === 'string' ? new TextEncoder().encode(files[p]) : files[p];
-      return Signoff.github.gitBlobShaBytes(bytes).then(function (sha) { blobs[sha] = bytes; tree.push({ path: p, type: 'blob', sha: sha, size: bytes.length }); });
-    })).then(function () {
-      var calls = [];
-      var fetchImpl = function (url, opts) {
-        calls.push(url);
-        var body = null, status = 200;
-        if (/\/git\/ref\/heads\/main$/.test(url)) body = { object: { sha: 'c0ffee' } };
-        else if (/\/git\/commits\/c0ffee$/.test(url)) body = { tree: { sha: 't1' } };
-        else if (/\/git\/trees\/t1/.test(url)) body = { tree: tree };
-        else { var m = /\/git\/blobs\/([0-9a-f]+)$/.exec(url); if (m && blobs[m[1]]) body = { content: Signoff.github.bytesToB64(blobs[m[1]]), encoding: 'base64' }; else { status = 404; body = { message: 'Not Found' }; } }
-        if (!/Bearer tok/.test(opts.headers.Authorization || '')) { status = 401; body = { message: 'Bad credentials' }; }
-        return Promise.resolve({ ok: status === 200, status: status, text: function () { return Promise.resolve(JSON.stringify(body)); } });
-      };
-      fetchImpl.calls = calls;
-      return fetchImpl;
+  // ── Access: flasher_data for FTEs, review-flasher-* per shared project (tests/fakegithub.js) ──
+  var AC = FL.access, OWNER = FL.config.owner, M = Signoff.model;
+  var BOARD_RAW = { name: 'T', flash: { base: '0x08000000', size: '0x80000' }, ram: { base: '0x20000000', size: '0x1C000' }, dfu: { vid: 1155, pid: 57105 } };
+  function boardIn(project, name) { return Object.assign({}, BOARD_RAW, { name: name, project: project }); }
+  // A data repo with two projects (alpha: board a1; beta: boards b1 and b2), one image per board.
+  function world(extraTokens) {
+    var gh = FakeGitHub({ owner: OWNER, tokens: Object.assign({ chris: OWNER, fte2: 'pat', bob: 'bob', eve: 'eve' }, extraTokens || {}) });
+    var imgs = { a1: image(4096, 1), b1: image(4096, 2), b2: image(6144, 3) };
+    return Promise.all(Object.keys(imgs).map(function (k) { return I.sha256(imgs[k]); })).then(function (h) {
+      var m = { format: 1, updated: '2026-11-10T12:00:00Z', projects: { alpha: { name: 'Alpha' }, beta: { name: 'Beta Box' } },
+        boards: { a1: boardIn('alpha', 'Alpha main'), b1: boardIn('beta', 'Beta main'), b2: boardIn('beta', 'Beta display') }, firmware: [] };
+      Object.keys(imgs).forEach(function (k, i) { m.firmware.push({ id: 'fw-' + k, board: k, name: 'FW ' + k, path: 'firmware/' + k + '/fw-' + k + '.bin', sha256: h[i], size: imgs[k].length }); });
+      var files = { 'README.md': '# data', 'manifest.json': AC.dump(m) };
+      Object.keys(imgs).forEach(function (k) { files['firmware/' + k + '/fw-' + k + '.bin'] = imgs[k]; });
+      var roster = M.emptyRoster();
+      roster.users.pat = M.stamp({ login: 'pat', name: 'Pat', role: 'fte', projects: [] }, OWNER);
+      files['users.json'] = AC.dump(roster);
+      return gh.repo(FL.config.repo, files, { collaborators: ['pat'] }).then(function () { return { gh: gh, imgs: imgs, manifest: m }; });
     });
   }
-  test('loadRepo: reads manifest.json and checks each file’s SHA-256', function () {
-    var good = image(4096), bad = image(4096, 77);
-    return Promise.all([I.sha256(good)]).then(function (h) {
-      var manifest = { format: 1, boards: { 't': { name: 'T', flash: { base: '0x08000000', size: '0x80000' }, ram: { base: '0x20000000', size: '0x1C000' }, dfu: { vid: 1155, pid: 57105 } } },
-        firmware: [{ id: 'a', board: 't', path: 'firmware/t/a.bin', sha256: h[0], size: 4096 }, { id: 'b', board: 't', path: 'firmware/t/b.bin', sha256: h[0], size: 4096 }] };
-      return fakeGitHub({ 'manifest.json': JSON.stringify(manifest), 'firmware/t/a.bin': good, 'firmware/t/b.bin': bad });
-    }).then(function (fetchImpl) {
-      return FL.catalog.loadRepo('tok', fetchImpl).then(function (c) {
-        eq(c.firmware.length, 2); eq(c.head, 'c0ffee');
-        return c.fetch(c.firmware[0]).then(function (bytes) {
-          eq(bytes.length, 4096);
-          return rejects(c.fetch(c.firmware[1]), /mismatch|doesn’t match/, 'changed file');
-        });
-      }).then(function () {
-        return rejects(FL.catalog.loadRepo('wrong', fetchImpl), /refused the saved token/);
+  function as(w, token) { return { token: token, fetch: w.gh.fetch, login: token === 'chris' ? OWNER : token }; }
+
+  test('access: projects and split', function () {
+    var m = { format: 1, projects: { p: { name: 'P' } }, boards: { x: { name: 'X', project: 'p' }, y: { name: 'Y' } }, firmware: [{ id: 'f', board: 'x' }, { id: 'g', board: 'y' }] };
+    var names = AC.projectsIn(m);
+    eq(names.p, 'P'); eq(names.y, 'Y', 'a board with no project is its own');
+    var s = AC.split(m, 'p');
+    eq(Object.keys(s.move.boards).join(), 'x'); eq(s.move.firmware.length, 1); eq(s.move.projects.p.name, 'P');
+    eq(Object.keys(s.keep.boards).join(), 'y'); eq(s.keep.firmware.length, 1); ok(!s.keep.projects.p, 'project name moves');
+    eq(Object.keys(m.boards).length, 2, 'input untouched');
+    ok(/^\{\n  "format": 1,\n/.test(AC.dump(m)) && /\n$/.test(AC.dump(m)), 'publish.py’s layout');
+  });
+  test('access: an FTE sees flasher_data, and a wrong token is refused', function () {
+    return world().then(function (w) {
+      return FL.catalog.loadRepo('fte2', w.gh.fetch).then(function (c) {
+        ok(c.fte, 'FTE'); eq(c.login, 'pat'); eq(c.firmware.length, 3); eq(Object.keys(c.projects).sort().join(), 'alpha,beta');
+        eq(c.projects.beta.name, 'Beta Box'); eq(c.boards.b1.project, 'beta');
+        return c.fetch(c.firmware[0]).then(function (b) { eq(b.length, 4096); });
+      }).then(function () { return rejects(FL.catalog.loadRepo('nobody', w.gh.fetch), /refused the saved token/); });
+    });
+  });
+  test('access: a changed file in the repo isn’t flashed', function () {
+    return world().then(function (w) {
+      var m = JSON.parse(w.gh.text(FL.config.repo, 'manifest.json'));
+      m.firmware[0].sha256 = 'f'.repeat(64);
+      return w.gh.repo(FL.config.repo, Object.assign(w.gh.files(FL.config.repo), { 'manifest.json': AC.dump(m) }), { collaborators: ['pat'] }).then(function () {
+        return FL.catalog.loadRepo('fte2', w.gh.fetch);
+      }).then(function (c) { return rejects(c.fetch(c.firmware[0]), /doesn’t match/); });
+    });
+  });
+  test('access: someone with nothing shared, or only an invitation', function () {
+    return world().then(function (w) {
+      return rejects(FL.catalog.loadRepo('bob', w.gh.fetch), /No firmware is shared with you/).then(function () {
+        w.gh.repos[FL.config.repo].invitations.push({ id: 7, login: 'bob' });   // a new FTE, invited to flasher_data
+        return rejects(FL.catalog.loadRepo('bob', w.gh.fetch), /invited/).then(function (e) {
+          return new Signoff.GitHubAccount('bob', w.gh.fetch).acceptInvitation(e.invites[0].id);
+        }).then(function () { return FL.catalog.loadRepo('bob', w.gh.fetch); }).then(function (c) { ok(c.fte, 'accepted: an FTE'); eq(c.firmware.length, 3); });
       });
     });
   });
-  test('loadRepo: an empty data repo says nothing is published', function () {
-    return fakeGitHub({ 'README.md': '# data' }).then(function (fetchImpl) {
-      return rejects(FL.catalog.loadRepo('tok', fetchImpl), /no manifest\.json/);
+  test('access: sharing a project moves it into its own repo; the contractor sees only it', function () {
+    var w, roster;
+    return world().then(function (x) {
+      w = x;
+      return AC.load(as(w, 'chris'));
+    }).then(function (loaded) {
+      roster = loaded.roster;
+      roster.users.bob = M.stamp({ login: 'bob', name: 'Bob', role: 'contractor', projects: ['beta'] }, OWNER);
+      return AC.saveRoster(as(w, 'chris'), roster);
+    }).then(function (merged) {
+      var log = [];
+      return AC.share(as(w, 'chris'), merged, 'beta', function (t) { log.push(t); }).then(function (res) {
+        eq(res.repo, OWNER + '/review-flasher-beta-box'); eq(res.failed.length, 0);
+        var dst = w.gh.files('review-flasher-beta-box'), src = w.gh.files(FL.config.repo);
+        ok(dst['firmware/b1/fw-b1.bin'] && dst['firmware/b2/fw-b2.bin'], 'images copied');
+        ok(!src['firmware/b1/fw-b1.bin'] && src['firmware/a1/fw-a1.bin'], 'moved ones removed, the rest kept');
+        var moved = JSON.parse(w.gh.text('review-flasher-beta-box', 'manifest.json')), kept = JSON.parse(w.gh.text(FL.config.repo, 'manifest.json'));
+        eq(Object.keys(moved.boards).sort().join(), 'b1,b2'); eq(Object.keys(kept.boards).join(), 'a1');
+        eq(JSON.parse(w.gh.text(FL.config.repo, 'users.json')).shared.beta.repo, res.repo, 'recorded');
+        eq(w.gh.repos['review-flasher-beta-box'].actions, false, 'Actions off');
+        ok(w.gh.repos['review-flasher-beta-box'].invitations.some(function (i) { return i.login === 'pat'; }), 'the other FTE invited');
+        return AC.invite(as(w, 'chris'), res.repo, ['bob']);
+      });
+    }).then(function () {
+      // Bob sees the invitation, accepts it, and then sees Beta only.
+      return rejects(FL.catalog.loadRepo('bob', w.gh.fetch), /invited/).then(function (e) {
+        eq(e.invites.length, 1);
+        return new Signoff.GitHubAccount('bob', w.gh.fetch).acceptInvitation(e.invites[0].id);
+      });
+    }).then(function () { return FL.catalog.loadRepo('bob', w.gh.fetch); }).then(function (c) {
+      ok(!c.fte, 'not an FTE'); eq(c.firmware.map(function (f) { return f.id; }).sort().join(), 'fw-b1,fw-b2');
+      return c.fetch(c.firmware[0]);
+    }).then(function (b) {
+      ok(b.length > 0, 'bob can read the image');
+      // The other FTE has an invitation to the new repo: offered, not an error. Accepted, all three show.
+      return FL.catalog.loadRepo('fte2', w.gh.fetch);
+    }).then(function (c) {
+      eq(c.firmware.length, 1); eq(c.invites.length, 1); eq(c.problems.length, 0, 'no error for a repo waiting on its invitation');
+      return new Signoff.GitHubAccount('fte2', w.gh.fetch).acceptInvitation(c.invites[0].id);
+    }).then(function () { return FL.catalog.loadRepo('fte2', w.gh.fetch); }).then(function (c) {
+      eq(c.firmware.length, 3); eq(c.invites.length, 0);
+      eq(c.firmware.filter(function (f) { return f.repo === OWNER + '/review-flasher-beta-box'; }).length, 2);
+      return Promise.all(c.firmware.map(function (f) { return c.fetch(f); }));
+    }).then(function () {
+      // Taking Beta away from Bob.
+      return AC.revoke(as(w, 'chris'), OWNER + '/review-flasher-beta-box', ['bob']);
+    }).then(function () { return rejects(FL.catalog.loadRepo('bob', w.gh.fetch), /No firmware is shared/); });
+  });
+  test('access: a share that stopped part way is picked up again', function () {
+    var w;
+    return world().then(function (x) {
+      w = x;
+      return w.gh.repo('review-flasher-beta-box', { 'README.md': '# empty' });   // made, then the share stopped
+    }).then(function () { return AC.load(as(w, 'chris')); }).then(function (l) {
+      return AC.share(as(w, 'chris'), l.roster, 'beta');
+    }).then(function (res) {
+      eq(res.repo, OWNER + '/review-flasher-beta-box', 'adopted, not -2');
+      return w.gh.repo('review-flasher-alpha', { 'notes.txt': 'someone else’s' });
+    }).then(function () { return AC.load(as(w, 'chris')); }).then(function (l) {
+      return AC.share(as(w, 'chris'), l.roster, 'alpha');
+    }).then(function (res) { eq(res.repo, OWNER + '/review-flasher-alpha-2', 'a repo holding other things is left alone'); });
+  });
+  test('access: who has what', function () {
+    return world().then(function (w) {
+      w.gh.repos[FL.config.repo].invitations.push({ id: 9, login: 'eve' });
+      return AC.accessMap(as(w, 'chris'), [AC.dataFull()]).then(function (m) {
+        eq(m[AC.dataFull()].pat, 'yes'); eq(m[AC.dataFull()].eve, 'invited'); eq(m[AC.dataFull()].bob, undefined);
+      });
     });
   });
   test('the demo catalog: valid images that match their hashes', function () {

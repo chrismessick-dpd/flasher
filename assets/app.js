@@ -41,6 +41,7 @@
     view: 'home', fwId: '',            // view: 'home' | 'fw' | 'local'
     local: null,                       // { name, bytes, sha256, boardId }
     skipTouch: false,
+    tab: 'flash',                      // the firmware panel's tab: 'flash' | 'console'
     run: null,                         // the flash in progress or last finished, for the current firmware
     con: null                          // { text, open, demo }
   };
@@ -68,7 +69,7 @@
     S.loading = true; render();
     return C.loadRepo(tok).then(done, fail);
     function done(c) { S.catalog = c; S.loading = false; restoreFromUrl(); if (current()) prepareBytes(); render(); }
-    function fail(e) { S.catalog = null; S.loading = false; S.error = e.message || String(e); render(); }
+    function fail(e) { S.catalog = e.catalog || null; S.invites = e.invites || []; S.loading = false; S.error = e.message || String(e); render(); }
   }
 
   // ?fw=<board>/<id> opens one firmware. Read once at start: renders while loading rewrite the address.
@@ -90,9 +91,14 @@
     renderAccount();
     var v = $('#view'), c = current();
     if ((S.view === 'fw' || S.view === 'local') && !c) S.view = 'home';
+    if (S.view === 'people' && !S.loading && !(S.catalog && S.catalog.fte)) S.view = 'home';
     if (S.loading && linked) return;   // keep ?fw= in the address until the list is here
-    v.innerHTML = S.view === 'home' ? homeHtml() : fwHtml(current());
-    $('#toolbar-title').textContent = c ? c.fw.name : 'Flasher';
+    var termFocused = document.activeElement && document.activeElement.id === 'term-in';
+    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : fwHtml(current());
+    if ($('#term')) { drawTerm(); var tb = $('#term'); tb.scrollTop = tb.scrollHeight; if (termFocused) focusTerm(); }
+    $('#people-link').hidden = !(S.catalog && S.catalog.fte && !DEMO);
+    $('#people-link').classList.toggle('active', S.view === 'people');
+    $('#toolbar-title').textContent = c ? c.fw.name : S.view === 'people' ? 'People & access' : 'Flasher';
     document.title = (c ? c.fw.name + ' · ' : '') + 'Flasher';
     setUrl();
   }
@@ -158,11 +164,19 @@
         '<p class="note">Just looking? <a href="?demo">Try the demo</a>, which flashes a simulated board.</p></div></div>';
     }
     if (S.error) {
+      if (S.invites && S.invites.length) {
+        return h + '<div class="hint fl-warn"><b>An invitation is waiting</b>' + esc(S.error) + '</div><div class="fl-row">' +
+          S.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
+      }
       return h + '<div class="hint fl-bad"><b>Couldn’t read the firmware list</b>' + esc(S.error) + '</div>' +
         '<div class="fl-row"><button class="btn btn-primary" data-act="reload">Try again</button><button class="btn" data-act="account">GitHub sign-in…</button><button class="btn" data-act="open-file">Open a .bin file…</button></div></div>';
     }
     if (!S.catalog) return h + '</div>';
     var c = S.catalog;
+    if (c.invites && c.invites.length) {
+      h += '<div class="hint fl-warn"><b>Invitation waiting</b>You’ve been given more firmware on GitHub. Accept to see it here.<div class="fl-row">' +
+        c.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
+    }
     if (c.problems.length) h += '<details class="guide"><summary>' + c.problems.length + ' entr' + (c.problems.length === 1 ? 'y' : 'ies') + ' in manifest.json skipped</summary><ul>' + c.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></details>';
     var by = {};
     c.firmware.forEach(function (f) { (by[f.board] = by[f.board] || []).push(f); });
@@ -198,12 +212,29 @@
         '<option value=""' + (S.local.boardId && boards()[S.local.boardId] ? '' : ' selected') + '>' + esc(I.GENERIC.name) + '</option></select></div>' +
         '<p class="note">The board decides the checks (flash size, RAM) and how it’s restarted into DFU mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p></div>';
     } else if (fw.description) {
-      h += '<h2 class="section-title">About this firmware</h2><div class="card fl-pad fl-desc">' + esc(fw.description) + '</div>';
+      // Collapsible; the choice is kept for this browser (flasher.v1.about).
+      h += '<details class="card fl-about" data-toggle="about"' + (aboutOpen() ? ' open' : '') + '><summary><span class="fl-about-title">About this firmware</span>' +
+        '<span class="fl-about-sum">' + esc(fw.summary || '') + '</span>' +
+        '<svg class="fl-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>' +
+        '<div class="fl-desc">' + esc(fw.description) + '</div></details>';
     }
-    h += '<h2 class="section-title">Flash it</h2>' + flashHtml(c, run);
-    if (S.con) h += consoleHtml();
+    // One panel: Flash, and the board's console beside it when the board has a serial port.
+    var tabs = !!(b.run && (DEMO || navigator.serial));
+    if (!tabs) S.tab = 'flash';
+    h += '<div class="card fl-panel">';
+    if (tabs) {
+      var live = S.con && S.con.open;
+      h += '<div class="fl-tabs" role="tablist">' +
+        '<button role="tab" data-act="tab" data-tab="flash" class="' + (S.tab === 'flash' ? 'on' : '') + '" aria-selected="' + (S.tab === 'flash') + '">Flash</button>' +
+        '<button role="tab" data-act="tab" data-tab="console" class="' + (S.tab === 'console' ? 'on' : '') + '" aria-selected="' + (S.tab === 'console') + '">Console' +
+        (live ? '<span class="fl-live" title="Connected"></span>' : '') + '</button></div>';
+    }
+    h += '<div class="fl-tab-body">' + (S.tab === 'console' ? consoleHtml(c) : flashHtml(c, run)) + '</div></div>';
     return h + '</div>';
   }
+
+  var ABOUT_KEY = 'flasher.v1.about';
+  function aboutOpen() { try { return localStorage.getItem(ABOUT_KEY) !== 'closed'; } catch (e) { return true; } }
 
   function stepState(run, step) {
     if (!run) return '';
@@ -216,7 +247,7 @@
 
   function flashHtml(c, run) {
     var b = c.board, chk = S.check, busy = run && run.busy;
-    var h = '<div class="card fl-pad fl-flash">';
+    var h = '<div class="fl-flash">';
     if (chk && chk.errors.length) h += '<div class="hint fl-bad"><b>This image can’t be flashed</b>' + chk.errors.map(esc).join('<br>') + '</div>';
     if (chk && chk.warnings.length) h += '<div class="hint fl-warn"><b>Check</b>' + chk.warnings.map(esc).join('<br>') + '</div>';
     var canTouch = !!(b.run && (DEMO || navigator.serial));
@@ -240,7 +271,7 @@
     var blocked = (chk && chk.errors.length) || (!DEMO && !navigator.usb) || !S.bytesReady;
     if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">Choose the board in DFU mode</button>';
     else h += '<button class="btn btn-primary" data-act="flash"' + (busy || blocked ? ' disabled' : '') + '>' + (busy ? 'Flashing…' : run && run.ok ? 'Flash again' : 'Flash board') + '</button>';
-    if (run && run.ok && b.run) h += '<button class="btn" data-act="console"' + (S.con && S.con.open ? ' disabled' : '') + '>Open console</button>';
+    if (run && run.ok && b.run && (DEMO || navigator.serial)) h += '<button class="btn" data-act="console">Open console</button>';
     if (!S.bytesReady && !S.bytesError) h += '<span class="fl-muted">Fetching the image…</span>';
     if (S.bytesError) h += '<span class="fl-muted fl-bad-text">' + esc(S.bytesError) + '</span>';
     h += '</div>';
@@ -256,11 +287,20 @@
       '<p>On Windows, if “' + esc(b.dfu.name || 'DFU in FS Mode') + '” never appears in the browser’s list, the board needs the WinUSB driver: <a href="#" data-act="driver">Windows driver help</a>.</p>';
   }
 
-  function consoleHtml() {
-    return '<h2 class="section-title">Console</h2><div class="card fl-pad"><pre class="fl-console" id="console-out">' + esc(S.con.text) + '</pre>' +
-      '<form class="fl-row" data-submit="console"><input class="input fl-grow" id="console-in" placeholder="' + (S.con.open ? 'Type a command and press Enter' : 'Closed') + '" autocomplete="off"' + (S.con.open ? '' : ' disabled') + '>' +
-      (S.con.open ? '<button class="btn" type="button" data-act="console-close">Close</button>' : '<button class="btn" type="button" data-act="console">Reopen</button>') + '</form>' +
-      '<p class="note">Lines end with a newline. The port opens at 115200 baud (never 1200, which would restart the board into its bootloader).</p></div>';
+  function consoleHtml(c) {
+    var st = S.con || {}, busy = S.run && S.run.busy;
+    var tone = st.open ? 'ok' : st.connecting ? 'busy' : st.error ? 'error' : 'idle';
+    var label = st.open ? 'Connected to ' + (c.board.run.name || 'the board') : st.connecting ? 'Connecting…' : st.error ? st.error : 'Not connected';
+    return '<div class="fl-con-bar"><span class="sync-dot" data-tone="' + tone + '"></span><span class="fl-con-status">' + esc(label) + '</span><span class="fl-grow"></span>' +
+      (st.open ? '<button class="btn" data-act="console-close">Disconnect</button>'
+        : '<button class="btn btn-primary" data-act="console"' + (st.connecting || busy ? ' disabled' : '') + '>Connect</button>') +
+      '<button class="btn" data-act="term-clear" title="Clear this window (the board isn’t told)">Clear</button></div>' +
+      '<div class="fl-term" id="term"><pre id="term-out">' + term.html(false) + '</pre>' +
+      // The keys go through a hidden field, as in xterm.js: special keys arrive as keydowns, and text
+      // from a phone keyboard, dictation, or an input method arrives as input.
+      '<textarea class="fl-term-in" id="term-in" aria-label="Console: keys go to the board" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea></div>' +
+      '<p class="note">Click in the console and type: every key goes to the board, which echoes it and edits the line. On a board whose console edits its own line, Up and Down recall history, Tab completes, and Ctrl-L or <b>clear</b> clears. ' +
+      'Ctrl-C copies when text is selected, and otherwise goes to the board. The port opens at 115200 baud, never 1200, which would restart the board into its bootloader. Close the Arduino IDE’s Serial Monitor first: only one program can have the port.</p>';
   }
 
   // ── The image for the current firmware ──
@@ -325,8 +365,8 @@
     var b = c.board;
     S.run = { key: runKey(), busy: true, step: 'restart', log: [], pct: 0, phase: '', t0: Date.now() };
     // A console left open holds the board's serial port, and the restart request needs it.
-    var closing = con ? con.close() : Promise.resolve();
-    con = null; S.con = null; clearInterval(demoTimer);
+    var closing = closeConsole();
+    S.con = null; S.tab = 'flash';
     upd();
     closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
       if (dev) { log('Found the board already in DFU mode (' + dev.productName + ').'); return dev; }
@@ -395,7 +435,7 @@
     }).then(function () {
       if (DEMO) { demoBoard.running = true; demoDev = null; }
       log('Started the firmware at ' + D.hex(base) + '.', 'ok');
-      S.run.busy = false; S.run.ok = true; S.run.ms = Date.now() - S.run.t0;
+      S.run.busy = false; S.run.ok = true; S.run.doneAt = Date.now(); S.run.ms = S.run.doneAt - S.run.t0;
       // The board now runs what was just written, so the next flash starts with the restart
       // request again (left ticked, the DFU list would be empty).
       S.skipTouch = false;
@@ -438,37 +478,257 @@
     upd();
   }
 
-  // ── Console ──
-  var con = null, demoTimer = 0;
+  // ── Console: a terminal on the board's serial port (assets/term.js draws it) ──
+  var con = null, term = new FL.term.Screen(), drawQueued = false;
+  function drawTerm() {
+    drawQueued = false;
+    var box = $('#term'), out = $('#term-out');
+    if (!box || !out) return;
+    var atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 6;
+    out.innerHTML = term.html(document.activeElement === $('#term-in') && !!(S.con && S.con.open));
+    if (atEnd) box.scrollTop = box.scrollHeight;
+  }
+  function queueDraw() { if (!drawQueued) { drawQueued = true; requestAnimationFrame(drawTerm); } }
+  function termAdd(t) { term.write(t); queueDraw(); }
+  function focusTerm() { var inp = $('#term-in'); if (inp) { inp.focus({ preventScroll: true }); queueDraw(); } }
+
   function openConsole() {
-    var c = current(); if (!c || !c.board.run) return;
-    var b = c.board;
-    S.con = { text: '', open: false }; render();
-    var add = function (t) { S.con.text = (S.con.text + t).slice(-20000); var o = $('#console-out'); if (o) { o.textContent = S.con.text; o.scrollTop = o.scrollHeight; } };
+    var c = current(); if (!c || !c.board.run || (S.con && (S.con.open || S.con.connecting))) return;
+    var b = c.board, key = runKey();
+    S.tab = 'console'; S.con = { open: false, connecting: true, error: '' }; render();
+    var done = function () { if (runKey() !== key) return; S.con.connecting = false; S.con.open = true; S.con.error = ''; render(); focusTerm(); };
+    var closed = function (why) {
+      if (S.con) { S.con.open = false; S.con.connecting = false; S.con.error = why || ''; }
+      if (why !== null) termAdd('\r\n[disconnected]\r\n');
+      con = null; if (runKey() === key) render();
+    };
     if (DEMO) {
-      S.con.open = true; render();
-      add('Acme Thermostat ' + c.fw.name + '\r\nType help for commands.\r\n');
-      clearInterval(demoTimer);
-      var t = 21.4;
-      demoTimer = setInterval(function () { t += (Math.random() - 0.5) * 0.1; add('T=' + t.toFixed(1) + ' °C  RH=38 %  24VAC ok\r\n'); }, 1000);
-      con = { send: function (line) { add('> ' + line + 'OK\r\n'); return Promise.resolve(); }, close: function () { clearInterval(demoTimer); S.con.open = false; render(); return Promise.resolve(); } };
+      var sh = FL.fakeusb.shell({
+        name: 'tstat', banner: 'Acme Thermostat console (' + c.fw.name + '). Type help; Tab completes.', onData: termAdd,
+        commands: {
+          status: function () { return 'OK heat off  cool off  T=21.4 °C  RH=38 %  24VAC ok'; },
+          relay: function (a) { return /^(heat|cool)$/.test(a[0] || '') && /^(on|off)$/.test(a[1] || '') ? 'OK ' + a[0] + ' relay ' + a[1] : 'ERR usage: relay heat|cool on|off'; },
+          info: function () { return 'OK ' + c.fw.name + ', made up for the demo'; }
+        }
+      });
+      con = { send: function (t) { sh.input(t); return Promise.resolve(); }, close: function () { sh.stop(); closed(''); return Promise.resolve(); } };
+      setTimeout(function () { done(); sh.start(); }, 250);
       return;
     }
-    add('Looking for ' + (b.run.name || 'the board') + '…\n');
-    var filter = { usbVendorId: b.run.vid, usbProductId: b.run.pid };
-    var until = Date.now() + 5000;
-    function find() {
+    // A port the browser already allows is used at once. Just after a flash the board is still coming
+    // back, so wait a few seconds for it first. Otherwise ask (the browser's list needs this click).
+    var waitUntil = S.run && S.run.ok && Date.now() - S.run.doneAt < 8000 ? Date.now() + 5000 : 0;
+    function known() {
       return navigator.serial.getPorts().then(function (ports) {
-        var p = ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.run); })[0];
+        return ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.run); })[0] || null;
+      });
+    }
+    function find() {
+      return known().then(function (p) {
         if (p) return p;
-        return Date.now() > until ? navigator.serial.requestPort({ filters: [filter] }) : FL.serial.sleep(300).then(find);
+        if (Date.now() < waitUntil) return FL.serial.sleep(300).then(find);
+        return navigator.serial.requestPort({ filters: [{ usbVendorId: b.run.vid, usbProductId: b.run.pid }] });
       });
     }
     find().then(function (port) {
-      con = new FL.serial.Console(add, function () { if (S.con) { S.con.open = false; add('\n[closed]\n'); render(); } });
-      return con.open(port).then(function () { S.con.open = true; render(); var i = $('#console-in'); if (i) i.focus(); });
+      con = new FL.serial.Console(termAdd, function () { closed(''); });
+      return con.open(port).then(done);
     }).catch(function (e) {
-      add('Couldn’t open the console: ' + (e.name === 'NotFoundError' ? 'no port chosen.' : e.message) + '\n'); S.con.open = false; render();
+      con = null;
+      if (S.con) {
+        S.con.connecting = false; S.con.open = false;
+        S.con.error = e.name === 'NotFoundError' ? 'No port chosen' : e.name === 'SecurityError' ? 'Click Connect to choose the port'
+          : 'Couldn’t open the port: another program has it (the Arduino IDE’s Serial Monitor?)';
+      }
+      if (runKey() === key) render();
+    });
+  }
+  function closeConsole() { var k = con; con = null; return k ? k.close() : Promise.resolve(); }
+
+  // ── People & access (FTEs; assets/access.js does the GitHub side) ──
+  var SM = window.Signoff.model, A = FL.access;
+  var ROLES = [['fte', 'FTE'], ['client', 'Client'], ['contractor', 'Contractor']];
+  var P = { map: null, loading: false };   // map: { repoFull: { login: 'yes' | 'invited' } }
+  function ctx() { return { token: C.auth.token(), login: S.catalog.login }; }
+  function owner() { return FL.config.owner.toLowerCase(); }
+  function isOwner() { return S.catalog && S.catalog.login === owner(); }
+  function roster() { return S.catalog.roster; }
+  function projects() { return (S.catalog && S.catalog.projects) || {}; }
+  function sharedRepos() {
+    var r = roster(), out = [];
+    Object.keys(r.shared || {}).forEach(function (id) { var x = SM.sharedRepo(r, id); if (x && out.indexOf(x) < 0) out.push(x); });
+    return out;
+  }
+  // The repos a person needs: an FTE, flasher_data and every shared repo; anyone else, their projects' repos.
+  function needs(u) {
+    if (u.role === 'fte') return [A.dataFull()].concat(sharedRepos());
+    return (u.projects || []).map(function (pid) { return SM.sharedRepo(roster(), pid); }).filter(Boolean);
+  }
+  function loadAccess() {
+    if (P.loading || !S.catalog || !S.catalog.fte) return;
+    P.loading = true;
+    A.accessMap(ctx(), [A.dataFull()].concat(sharedRepos())).then(function (m) { P.map = m; P.loading = false; if (S.view === 'people') render(); },
+      function () { P.loading = false; });
+  }
+  function accessCell(u) {
+    if (u.login === owner()) return '<span class="muted">Owner</span>';
+    var unshared = u.role !== 'fte' ? (u.projects || []).filter(function (pid) { return !SM.sharedRepo(roster(), pid); }) : [];
+    if (!P.map) return '<span class="muted">' + (P.loading ? 'Checking…' : '—') + '</span>';
+    var missing = [], invited = [];
+    needs(u).forEach(function (r) { var st = P.map[r] && P.map[r][u.login]; if (st === 'invited') invited.push(r); else if (st !== 'yes') missing.push(r); });
+    var fix = ' <button class="btn btn-plain fl-small" data-act="fix-access" data-login="' + esc(u.login) + '">Fix</button>';
+    if (missing.length || unshared.length) {
+      return '<span class="fl-bad-text">Missing ' + esc(missing.map(function (r) { return r.split('/')[1]; }).concat(unshared.map(function (p) { return (projects()[p] || {}).name || p; })).join(', ')) + '</span>' + fix;
+    }
+    if (invited.length) return '<span class="muted">Invited; not accepted yet</span>';
+    return needs(u).length ? '<span class="fl-good-text">Has access</span>' : '<span class="muted">Nothing yet</span>';
+  }
+
+  function peopleHtml() {
+    if (!S.catalog || !S.catalog.fte) return '<div class="page"><div class="card empty"><h2>People &amp; access</h2><p>Only FTEs, who can open ' + esc(A.dataFull()) + ', manage who can flash what.</p></div></div>';
+    if (!P.map && !P.loading) loadAccess();
+    var people = SM.liveUsers(roster()), pj = projects();
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">People &amp; access · ' + esc(FL.config.owner) + '</div>' +
+      '<h1 class="page-title">Flasher</h1><div class="page-sub">FTEs can flash every project. Clients and contractors can flash only the projects shared with them, each in its own private repository.</div></div>' +
+      '<div class="fl-row fl-head-acts"><button class="btn" data-act="refresh-access">Refresh</button><button class="btn btn-primary" data-act="add-person">Add person</button></div></div>';
+    if (!isOwner()) h += '<div class="hint">Only <b>' + esc(FL.config.owner) + '</b> can create repositories and invite people while they’re in a personal account. You can edit this list; the owner applies the access with Fix.</div>';
+    if (!people.length) {
+      h += '<div class="card fl-pad"><b>No one is listed yet.</b> Add yourself and the other FTEs first, then clients and contractors. ' +
+        '<button class="btn btn-plain" data-act="add-self">Add me (@' + esc(S.catalog.login) + ') as FTE</button></div>';
+    } else {
+      h += '<div class="card table-scroll"><table class="table people"><thead><tr><th>Person</th><th>Role</th><th>Projects</th><th>GitHub access</th><th></th></tr></thead><tbody>' +
+        people.map(function (u) {
+          var projs = u.role === 'fte' ? '<span class="muted">All projects</span>'
+            : ((u.projects || []).map(function (id) { return '<span class="chip">' + esc((pj[id] || {}).name || id) + '</span>'; }).join(' ') || '<span class="muted">None yet</span>') +
+              ' <button class="btn btn-plain fl-small" data-act="person-projects" data-login="' + esc(u.login) + '">Edit</button>';
+          return '<tr><td><div>' + esc(u.name || u.login) + (u.login === S.catalog.login ? ' <span class="muted">(you)</span>' : '') + '</div><div class="muted">@' + esc(u.login) + '</div></td>' +
+            '<td><div class="seg">' + ROLES.map(function (r) {
+              return '<button class="' + (u.role === r[0] ? 'on' : '') + '" data-act="person-role" data-login="' + esc(u.login) + '" data-role="' + r[0] + '">' + r[1] + '</button>';
+            }).join('') + '</div></td><td>' + projs + '</td><td>' + accessCell(u) + '</td>' +
+            '<td>' + (u.login === S.catalog.login ? '' : '<button class="btn btn-plain fl-small" data-act="remove-person" data-login="' + esc(u.login) + '">Remove</button>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    var ids = Object.keys(pj).sort(function (a, b) { return pj[a].name.localeCompare(pj[b].name); });
+    if (ids.length) {
+      h += '<h2 class="section-title">Projects</h2><div class="card table-scroll"><table class="table people"><thead><tr><th>Project</th><th>Repository</th><th>Clients and contractors</th></tr></thead><tbody>' +
+        ids.map(function (id) {
+          var repo = SM.sharedRepo(roster(), id) || pj[id].repo;
+          var who = people.filter(function (u) { return SM.isOutside(u) && (u.projects || []).indexOf(id) >= 0; }).map(function (u) { return esc(u.name || u.login); }).join(', ');
+          return '<tr><td>' + esc(pj[id].name) + '</td><td><a href="https://github.com/' + esc(repo) + '" target="_blank" rel="noopener">' + esc(repo) + '</a>' +
+            (repo === A.dataFull() ? ' <span class="muted">(FTEs only)</span>' : '') + '</td><td>' + (who || '<span class="muted">None</span>') + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
+    h += '<p class="note fl-foot">Projects no one outside has been given live in <b>' + esc(A.dataFull()) + '</b>, which only FTEs can open. Giving a client or contractor a project moves its firmware into its own private <b>' + A.PREFIX + '…</b> repository and invites them to that one only; publishing then goes there. FTEs are invited to every one. ' +
+      'On a personal account every collaborator can push to the repositories they’re on.</p></div>';
+    return h;
+  }
+
+  // A sheet that shows progress, then a Close button.
+  function busySheet(title) {
+    sheet('<div class="sheet-head"><h2>' + esc(title) + '</h2></div><div class="sheet-body"><div class="log" id="busy-log"></div></div><div class="sheet-foot" id="busy-foot"><span class="fl-muted">Working…</span></div>');
+    var logEl = $('#busy-log');
+    return {
+      log: function (t, cls) { var d = document.createElement('div'); if (cls) d.className = cls; d.textContent = t; logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight; },
+      done: function (ok) { $('#busy-foot').innerHTML = '<span class="' + (ok ? 'fl-good-text' : 'fl-bad-text') + '">' + (ok ? 'Done' : 'Stopped') + '</span><span class="spacer"></span><button class="btn btn-primary" data-act="sheet-close">Close</button>'; }
+    };
+  }
+  // Run a change: write the People list, then the GitHub side; reload; report failures.
+  function apply(title, change) {
+    var b = busySheet(title);
+    return Promise.resolve().then(function () { return change(b.log); }).then(function (failed) {
+      (failed || []).forEach(function (f) { b.log('Couldn’t change @' + f.login + ' on ' + f.repo + ': ' + f.message, 'err'); });
+      b.log('Saved.', 'ok'); b.done(!(failed || []).length);
+    }, function (e) { b.log(e.message || String(e), 'err'); b.done(false); })
+      .then(function () { P.map = null; return load(); });
+  }
+  function setPerson(login, fields) {
+    var r = roster(), prev = r.users[login] || { login: login, name: '', role: 'contractor', projects: [] };
+    r.users[login] = SM.stamp(Object.assign({}, prev, fields, { login: login }), S.catalog.login);
+  }
+  function save(log, what) {
+    log('Saving the People list…');
+    return A.saveRoster(ctx(), roster(), 'Flasher: ' + what).then(function (merged) { S.catalog.roster = merged; });
+  }
+  // Grant what a person's role and projects call for: share unshared projects, then invite.
+  function grant(login, log) {
+    var u = roster().users[login], failed = [];
+    if (!u || u.deleted || login === owner()) return Promise.resolve(failed);
+    var todo = u.role === 'fte' ? [] : (u.projects || []).filter(function (pid) { return !SM.sharedRepo(roster(), pid); });
+    return todo.reduce(function (chain, pid) {
+      return chain.then(function () {
+        log('Moving “' + ((projects()[pid] || {}).name || pid) + '” into its own repository…');
+        return A.share(ctx(), roster(), pid, log).then(function (res) { S.catalog.roster = res.roster; failed = failed.concat(res.failed); });
+      });
+    }, Promise.resolve()).then(function () {
+      return Promise.all(needs(roster().users[login]).map(function (r) { return A.invite(ctx(), r, [login], log); }));
+    }).then(function (lists) { return failed.concat.apply(failed, lists); });
+  }
+  function take(login, repos, log) {
+    return Promise.all(repos.map(function (r) { return A.revoke(ctx(), r, [login], log); })).then(function (lists) { return [].concat.apply([], lists); });
+  }
+
+  function personSheet(login) {
+    var u = login ? roster().users[login] : null, pj = projects(), role = u ? u.role : 'contractor', picked = u ? (u.projects || []).slice() : [];
+    var ids = Object.keys(pj).sort(function (a, b) { return pj[a].name.localeCompare(pj[b].name); });
+    sheet('<div class="sheet-head"><h2>' + (u ? esc(u.name || u.login) : 'Add person') + '</h2><p>' + (u ? 'Choose the projects ' + (u.role === 'client' ? 'this client sees' : 'this contractor works on') + '. Each one is shared through its own private repository.' : 'They need a free GitHub account. Use their GitHub username.') + '</p></div>' +
+      '<div class="sheet-body">' +
+      (u ? '' : '<div class="row2"><div class="field"><label for="p-name">Name</label><input class="input" id="p-name" placeholder="First Last"></div>' +
+        '<div class="field"><label for="p-login">GitHub username</label><input class="input" id="p-login" placeholder="username" autocomplete="off"></div></div>' +
+        '<div class="field"><span class="field-label">Role</span><div class="seg full" id="p-role">' +
+        '<button type="button" data-act="prole" data-prole="fte">FTE: every project</button><button type="button" data-act="prole" data-prole="client">Client: chosen projects</button><button type="button" class="on" data-act="prole" data-prole="contractor">Contractor: chosen projects</button></div></div>') +
+      '<div class="field" id="p-projects-field"' + (role === 'fte' ? ' hidden' : '') + '><span class="field-label">Projects</span><div class="pick-grid" id="p-projects">' +
+      (ids.length ? ids.map(function (id) {
+        return '<button type="button" class="pick' + (picked.indexOf(id) >= 0 ? ' on' : '') + '" data-act="ppick" data-ppick="' + esc(id) + '"><b>' + esc(pj[id].name) + '</b><span>' + (SM.sharedRepo(roster(), id) ? 'Shared' : 'FTEs only so far') + '</span></button>';
+      }).join('') : '<p class="note">No projects yet: publish firmware first.</p>') + '</div></div></div>' +
+      '<div class="sheet-foot"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancel</button><button class="btn btn-primary" data-act="person-save" data-login="' + esc(login || '') + '">' + (u ? 'Save' : 'Add') + '</button></div>');
+  }
+
+  function personSave(login) {
+    var chosen = Array.prototype.map.call(document.querySelectorAll('#p-projects .pick.on'), function (x) { return x.dataset.ppick; });
+    if (login) {
+      var before = (roster().users[login].projects || []).slice();
+      closeSheet();
+      return apply('Projects for @' + login, function (log) {
+        setPerson(login, { projects: chosen });
+        return save(log, 'projects for @' + login).then(function () {
+          var gone = before.filter(function (p) { return chosen.indexOf(p) < 0; }).map(function (p) { return SM.sharedRepo(roster(), p); }).filter(Boolean);
+          return take(login, gone, log).then(function (f1) { return grant(login, log).then(function (f2) { return f1.concat(f2); }); });
+        });
+      });
+    }
+    var l = ($('#p-login').value || '').trim().replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,38})$/.test(l)) { $('#p-login').focus(); return toast('Enter their GitHub username'); }
+    var on = document.querySelector('#p-role .on'), role = on ? on.dataset.prole : 'contractor', name = ($('#p-name').value || '').trim() || l;
+    closeSheet();
+    return apply('Adding @' + l, function (log) {
+      setPerson(l, { name: name, role: role, projects: role === 'fte' ? [] : chosen, deleted: false });
+      return save(log, 'add @' + l).then(function () { return grant(l, log); });
+    });
+  }
+
+  function setRole(login, role) {
+    var u = roster().users[login]; if (!u || u.role === role) return;
+    var was = needs(u);
+    return apply('@' + login + ' is now ' + (role === 'fte' ? 'an FTE' : 'a ' + role), function (log) {
+      setPerson(login, { role: role });
+      return save(log, '@' + login + ' role').then(function () {
+        var now = needs(roster().users[login]);
+        return take(login, was.filter(function (r) { return now.indexOf(r) < 0; }), log).then(function (f1) { return grant(login, log).then(function (f2) { return f1.concat(f2); }); });
+      });
+    });
+  }
+
+  function removePerson(login) {
+    var u = roster().users[login]; if (!u) return;
+    sheet('<div class="sheet-head"><h2>Remove @' + esc(login) + '?</h2><p>They lose access to ' + esc(needs(u).join(', ') || 'nothing yet') + '. The firmware stays.</p></div>' +
+      '<div class="sheet-foot"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancel</button><button class="btn btn-danger" data-act="remove-confirm" data-login="' + esc(login) + '">Remove</button></div>');
+  }
+  function removeConfirm(login) {
+    var repos = needs(roster().users[login]).concat([A.dataFull()]).filter(function (r, i, a) { return a.indexOf(r) === i; });
+    closeSheet();
+    return apply('Removing @' + login, function (log) {
+      setPerson(login, { deleted: true });
+      return save(log, 'remove @' + login).then(function () { return take(login, repos, log); });
     });
   }
 
@@ -518,8 +778,8 @@
   // ── Events ──
   function select(view, key) {
     if (S.run && S.run.busy) return toast('Wait for the flash to finish.');
-    if (con) { con.close(); con = null; }
-    S.view = view; S.fwId = key || ''; S.run = null; S.con = null;
+    closeConsole();
+    S.view = view; S.fwId = key || ''; S.run = null; S.con = null; S.tab = 'flash'; term = new FL.term.Screen();
     document.body.querySelector('.app').classList.remove('nav-open');
     prepareBytes(); render(); $('#main').scrollTop = 0;
   }
@@ -546,12 +806,36 @@
       case 'flash': startFlash(); break;
       case 'pick-dfu': { var c = current(); if (c && S.run) { S.run.busy = true; S.run.waitPick = false; upd(); askForDfu(c, false); } break; }
       case 'console': openConsole(); break;
-      case 'console-close': if (con) { con.close(); con = null; } break;
+      case 'console-close': closeConsole(); break;
+      case 'term-clear': term.clear(); queueDraw(); focusTerm(); break;
+      case 'tab':
+        S.tab = el.dataset.tab === 'console' ? 'console' : 'flash'; render();
+        if (S.tab === 'console' && S.con && S.con.open) focusTerm();
+        break;
       case 'account': accountSheet(); break;
       case 'driver': driverSheet(); break;
       case 'sheet-bg': case 'sheet-close': closeSheet(); break;
       case 'sign-out': C.auth.clear(); closeSheet(); S.catalog = null; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out'); break;
       case 'reload': load(); break;
+      case 'people': select('people'); loadAccess(); break;
+      case 'refresh-access': P.map = null; loadAccess(); render(); break;
+      case 'add-person': personSheet(''); break;
+      case 'add-self': apply('Adding you', function (log) { setPerson(S.catalog.login, { name: S.catalog.login, role: 'fte', projects: [], deleted: false }); return save(log, 'add @' + S.catalog.login); }); break;
+      case 'person-projects': personSheet(el.dataset.login); break;
+      case 'person-save': personSave(el.dataset.login); break;
+      case 'person-role': setRole(el.dataset.login, el.dataset.role); break;
+      case 'remove-person': removePerson(el.dataset.login); break;
+      case 'remove-confirm': removeConfirm(el.dataset.login); break;
+      case 'fix-access': { var fl = el.dataset.login; apply('Access for @' + fl, function (log) { return grant(fl, log); }); break; }
+      case 'prole': {
+        document.querySelectorAll('#p-role button').forEach(function (x) { x.classList.toggle('on', x === el); });
+        $('#p-projects-field').hidden = el.dataset.prole === 'fte';
+        break;
+      }
+      case 'ppick': el.classList.toggle('on'); break;
+      case 'accept-invite':
+        new window.Signoff.GitHubAccount(C.auth.token()).acceptInvitation(el.dataset.id).then(function () { toast('Invitation accepted'); load(); }, function (e) { toast('Couldn’t accept it: ' + e.message); });
+        break;
       case 'theme': { var t = isDark(readTheme()) ? 'light' : 'dark'; writeTheme(t); applyTheme(t); break; }
       case 'nav': sideCollapsed(); break;
     }
@@ -571,17 +855,50 @@
       if (!t) return;
       C.auth.set(t, $('#tok-remember').checked); closeSheet(); load();
     }
-    if (k === 'console' && con && S.con && S.con.open) {
-      var i = $('#console-in'), line = i.value; i.value = '';
-      con.send(line + '\n').catch(function (e) { toast('Couldn’t send: ' + e.message); });
-    }
   });
 
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && $('#sheet-root').innerHTML) { closeSheet(); return; }
+    if (ev.target && ev.target.id === 'term-in') {
+      // The console: keys go to the board as a terminal sends them.
+      var sel = String(window.getSelection ? window.getSelection() : '');
+      var bytes = FL.term.keyBytes(ev, !!sel);
+      if (bytes !== null && con && S.con && S.con.open) {
+        ev.preventDefault();
+        con.send(bytes).catch(function (e) { toast('Couldn’t send: ' + e.message); });
+      }
+      return;
+    }
     var typing = /INPUT|TEXTAREA|SELECT/.test((ev.target.tagName || ''));
     if (ev.key === '[' && !typing && !ev.ctrlKey && !ev.metaKey) sideCollapsed();
   });
+
+  // Pasted text goes to the board as typed, with line ends as Enter.
+  document.addEventListener('paste', function (ev) {
+    if (!(ev.target && ev.target.id === 'term-in') || !con || !(S.con && S.con.open)) return;
+    ev.preventDefault();
+    var text = (ev.clipboardData && ev.clipboardData.getData('text')) || '';
+    if (text) con.send(text.replace(/\r?\n/g, '\r')).catch(function (e) { toast('Couldn’t send: ' + e.message); });
+  });
+  // The cursor shows only while the console has focus.
+  document.addEventListener('focusin', function (ev) { if (ev.target.id === 'term-in') queueDraw(); });
+  document.addEventListener('focusout', function (ev) { if (ev.target.id === 'term-in') queueDraw(); });
+  // Text that came without a keydown (phone keyboards, dictation, input methods): send it as typed.
+  document.addEventListener('input', function (ev) {
+    if (ev.target.id !== 'term-in') return;
+    var text = ev.target.value; ev.target.value = '';
+    if (text && con && S.con && S.con.open) con.send(text.replace(/\r?\n/g, '\r')).catch(function (e) { toast('Couldn’t send: ' + e.message); });
+  });
+  // A click in the console puts the keys there, unless it was to select text to copy.
+  document.addEventListener('mouseup', function (ev) {
+    if (!ev.target.closest || !ev.target.closest('#term')) return;
+    if (!String(window.getSelection ? window.getSelection() : '')) focusTerm();
+  });
+  document.addEventListener('toggle', function (ev) {
+    if (ev.target.dataset && ev.target.dataset.toggle === 'about') {
+      try { localStorage.setItem(ABOUT_KEY, ev.target.open ? 'open' : 'closed'); } catch (e) { /* storage blocked */ }
+    }
+  }, true);
 
   $('#file-input').addEventListener('change', function () {
     var f = this.files && this.files[0]; this.value = '';
