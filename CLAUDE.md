@@ -34,13 +34,15 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 - **Console (2026-11-10, Chris):** a terminal (`assets/term.js`), so the board's own line editing
   works (history, Tab, Ctrl-L, `clear`). Flash and Console are tabs of one panel; About folds.
   Tried in `?demo` against `FL.fakeusb.shell`; not yet against the board.
-- **Two code bases on one board (2026-11-10, Chris; branch `native-board`, not committed):** the
+- **Two code bases on one board (2026-11-10, Chris; pushed `75a1081`):** the
   client board also runs its STM32CubeIDE firmware, which now takes the same 1200-baud touch. A
   board's `runAlso` lists other firmware USB ids it may be running; Flasher looks for any of them
   (`board.runs`, `FL.serial.matches`/`filters`/`portNames`). `publish.py` publishes a whole-project
   build through `images` (with `path` for a vendor toolchain), and `--board-only` writes only a
   board's details. Chris chose its own FTE-only project for that firmware, with `flasher.json`
-  committed in its repo. Not yet published or tried from the page.
+  committed in its repo. Published at Chris's OK: the image and its board to `flasher_data`
+  (`44cec31`), and `runAlso` on the Arduino board (shared repo `d1ee712`, `--board-only`). Not yet
+  tried from the page.
 
 ## Rules
 
