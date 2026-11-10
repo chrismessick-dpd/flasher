@@ -435,10 +435,10 @@
   });
   test('the demo catalog: valid images that match their hashes', function () {
     return FL.catalog.loadDemo().then(function (c) {
-      eq(c.firmware.length, 3); eq(c.problems.length, 0);
+      eq(c.firmware.length, 4); eq(c.problems.length, 0);
       return Promise.all(c.firmware.map(function (f) {
         return c.fetch(f).then(function (b) {
-          ok(I.check(b, c.boards[f.board]).ok, f.id + ' passes the checks');
+          if (f.kind !== 'units') ok(I.check(b, c.boards[f.board]).ok, f.id + ' passes the checks');
           return I.sha256(b).then(function (h) { eq(h, f.sha256, f.id + ' hash'); });
         });
       }));
@@ -450,6 +450,183 @@
       return c.fetch(f).then(function (bytes) { return s.open().then(function () { return s.flash(b.flash.base, bytes); }); })
         .then(function (r) { eq(r.verified, true); });
     });
+  });
+
+  // ── Bridge boards: the serial bootloader through a passthrough (assets/sboot.js) ──
+  var B = FL.sboot, FB = FL.fakebridge;
+  function bytesOf(s) { return new Uint8Array(Array.prototype.map.call(s, function (ch) { return ch.charCodeAt(0); })); }
+  // A made-up image: two internal sectors and five 64 KB external blocks, filled with 0xFF past the data.
+  function bridgeImage(seed, older) {
+    var r = (function (s) { return function () { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s & 0xFF; }; })(seed || 9);
+    var units = [[0x08010000, 0x8000, 0x6000], [0x08018000, 0x10000, 0x2100]], at = 0x70000000;
+    for (var k = 0; k < 5; k++) units.push([at + k * 0x10000, 0x10000, k === 4 ? 0x1234 : 0x10000]);
+    var list = units.map(function (u) { var b = new Uint8Array(u[1]).fill(0xFF); for (var i = 0; i < u[2]; i++) b[i] = r(); return { addr: u[0], size: u[1], bytes: b }; });
+    if (older) [0, 4].forEach(function (i) { list[i].bytes[100] ^= 0xFF; });
+    return list;
+  }
+  function bridgePlan(list) {
+    var parts = FL.catalog.partsOf(list), units = [], files = {}, app = 0, appLen = 0;
+    parts.forEach(function (p) {
+      p.path = 'firmware/t/x/' + p.addr.toString(16).padStart(8, '0') + '.bin'; files[p.path] = p.bytes;
+      p.units.forEach(function (u) {
+        units.push({ addr: u.addr, size: u.size, crc: B.crc32(u.bytes), part: p });
+        if (u.addr < 0x70000000) { app = B.crc32(u.bytes, app); appLen += u.size; }
+      });
+    });
+    return { image: { units: units, parts: parts, commit: { crc: app, length: appLen } }, files: files };
+  }
+  function bridgeSim(list) {
+    var sim = FB.display({ units: list, appBase: 0x08010000, qspiBase: 0x70000000, device: 0x4A5, bootMs: 5 });
+    list.forEach(function (u) { sim.load(u.addr, u.bytes); });
+    return sim;
+  }
+  var EXPECT = { device: 0x4A5, appBase: 0x08010000, qspiBase: 0x70000000, singleBank: true };
+
+  test('crc32: zlib’s check value, and continuing over pieces', function () {
+    eq(B.crc32(bytesOf('123456789')), 0xCBF43926);
+    eq(B.crc32(bytesOf('6789'), B.crc32(bytesOf('12345'))), 0xCBF43926);
+    eq(B.crc32(new Uint8Array(0)), 0);
+  });
+
+  test('frames: round trip, damaged and split frames, and bytes kept for the next one', function () {
+    var a = B.frame(0x85, 7, [0, 1, 2, 3], B.RSP), c = B.frame(0x81, 8, [0], B.RSP), rx = new B.Rx();
+    var bad = a.slice(); bad[7] ^= 1;
+    rx.push(new Uint8Array([0x00, 0x5A]));     // noise, and a lone sync byte
+    rx.push(bad); rx.push(a.subarray(0, 5));
+    eq(rx.take(), null, 'damaged frame skipped, the next one incomplete');
+    var both = new Uint8Array(a.length - 5 + c.length); both.set(a.subarray(5), 0); both.set(c, a.length - 5);
+    rx.push(both);
+    var f = rx.take(); eq(f.cmd, 0x85); eq(f.seq, 7); eq(Array.from(f.payload).join(), '0,1,2,3');
+    eq(rx.take().seq, 8, 'the frame after it was kept'); eq(rx.take(), null);
+  });
+
+  test('update: compare only changes nothing; then only the differing blocks are written', async function () {
+    var now = bridgeImage(9), plan = bridgePlan(now), sim = bridgeSim(bridgeImage(9, true)), port = FB.port(sim);
+    var link = new B.Link(port), fetched = [];
+    var opts = { expect: EXPECT, fetchPart: function (p) { fetched.push(p.path); return Promise.resolve(plan.files[p.path]); } };
+    await link.open(1000000);
+    var cmp = await B.update(link, plan.image, Object.assign({ compareOnly: true }, opts));
+    eq(cmp.changed.length, 2); eq(cmp.changed[0].addr, 0x08010000); eq(cmp.changed[1].addr, 0x70020000);
+    eq(sim.counts[B.CMD.ERASE] || 0, 0, 'compare erases nothing'); eq(fetched.length, 0, 'and downloads nothing');
+    var res = await B.update(link, plan.image, opts);
+    eq(res.changed.length, 2); eq(res.written, 0x8000 + 0x10000);
+    eq(sim.counts[B.CMD.ERASE], 2); eq(sim.record, B.RECORD.COMPLETE); ok(sim.running, 'started');
+    eq(fetched.join(), 'firmware/t/x/08010000.bin,firmware/t/x/70000000.bin', 'only the parts holding a changed block');
+    now.forEach(function (u) { eq(B.crc32(sim.read(u.addr, u.size)), B.crc32(u.bytes), 'block ' + B.hex(u.addr)); });
+    await link.close();
+  });
+
+  test('update: up to date writes nothing; an unfinished update is finished even so', async function () {
+    var now = bridgeImage(4), plan = bridgePlan(now), sim = bridgeSim(now), link = new B.Link(FB.port(sim));
+    await link.open(1000000);
+    var res = await B.update(link, plan.image, { expect: EXPECT, fetchPart: function () { throw new Error('no download'); } });
+    ok(res.upToDate); eq(sim.counts[B.CMD.BEGIN] || 0, 0);
+    sim.record = B.RECORD.INCOMPLETE; sim.running = false;
+    res = await B.update(link, plan.image, { expect: EXPECT, fetchPart: function () { throw new Error('no download'); } });
+    ok(!res.upToDate); eq(sim.counts[B.CMD.BEGIN], 1); eq(sim.counts[B.CMD.COMMIT], 1); eq(sim.record, B.RECORD.COMPLETE);
+    await link.close();
+  });
+
+  test('update: a faster link after SET_BAUD, and lost answers retried', async function () {
+    var now = bridgeImage(5), plan = bridgePlan(now), sim = bridgeSim(bridgeImage(5, true)), port = FB.port(sim), link = new B.Link(port), notes = [];
+    sim.dropEvery = 9;
+    await link.open(1000000);
+    var res = await B.update(link, plan.image, { expect: EXPECT, fastBaud: 4000000, log: function (t) { notes.push(t); }, fetchPart: function (p) { return Promise.resolve(plan.files[p.path]); } });
+    eq(sim.baud, 4000000); eq(link.baud, 4000000); eq(port.opened.length, 2, 'reopened at the new rate');
+    eq(res.changed.length, 2); eq(sim.record, B.RECORD.COMPLETE);
+    ok(notes.some(function (t) { return /No answer/.test(t); }), 'a retry was logged');
+    await link.close();
+  });
+
+  test('update: the wrong board is refused before anything is written', async function () {
+    var plan = bridgePlan(bridgeImage(6)), sim = bridgeSim(bridgeImage(6, true)), link = new B.Link(FB.port(sim));
+    sim.device = 0x449;
+    await link.open(1000000);
+    await rejects(B.update(link, plan.image, { expect: EXPECT, fetchPart: function () {} }), /isn’t the board.*0x449.*wrong/, 'wrong chip');
+    eq(sim.counts[B.CMD.BEGIN] || 0, 0);
+    await link.close();
+  });
+
+  test('update: a download that doesn’t match its CRC stops before BEGIN', async function () {
+    var plan = bridgePlan(bridgeImage(7)), sim = bridgeSim(bridgeImage(7, true)), link = new B.Link(FB.port(sim));
+    await link.open(1000000);
+    await rejects(B.update(link, plan.image, { expect: EXPECT, fetchPart: function (p) { var b = plan.files[p.path].slice(); b[200] ^= 1; return Promise.resolve(b); } }), /mismatch/);
+    eq(sim.counts[B.CMD.BEGIN] || 0, 0);
+    await link.close();
+  });
+
+  test('the exit rate leaves the passthrough', async function () {
+    var sim = bridgeSim(bridgeImage(8)), exited = 0, port = FB.port(sim, { onExit: function () { exited++; } });
+    await port.open({ baudRate: 1200 }); await port.close();
+    eq(exited, 1); eq(sim.exits, 1);
+  });
+
+  test('manifest: bridge boards and units firmware', function () {
+    var plan = bridgePlan(bridgeImage(3)), sha = 'a'.repeat(64);
+    var parts = plan.image.parts.map(function (p) {
+      return { path: 'firmware/disp/app/' + p.addr.toString(16).padStart(8, '0') + '.bin', addr: p.addr, size: p.size, sha256: sha,
+        units: p.units.map(function (u) { return [u.addr, u.size, B.crc32(u.bytes)]; }) };
+    });
+    var total = parts.reduce(function (n, p) { return n + p.size; }, 0);
+    function man(f, board) {
+      return { format: 1, boards: {
+        disp: Object.assign({ kind: 'bridge', name: 'Display', touch: [{ vid: 1, pid: 2, name: 'Host' }], bridge: { vid: 1, pid: 3 }, expect: { device: '0x4A5', appBase: '0x08010000' } }, board || {}),
+        dfu1: { flash: { base: 0, size: 1 }, ram: { base: 0, size: 1 }, dfu: { vid: 1, pid: 2 } }
+      }, firmware: [Object.assign({ id: 'app', board: 'disp', kind: 'units', path: 'firmware/disp/app/', parts: parts, size: total, sha256: sha, commit: { crc32: plan.image.commit.crc, length: plan.image.commit.length } }, f || {})] };
+    }
+    var c = I.cleanManifest(man());
+    eq(c.problems.length, 0, c.problems.join('; '));
+    var b = c.boards.disp, f = c.firmware[0];
+    eq(b.kind, 'bridge'); eq(b.touchBaud, 2400); eq(b.exitBaud, 1200); eq(b.linkBaud, 1000000); eq(b.runs.length, 1); eq(b.expect.device, 0x4A5);
+    eq(f.units.length, 7); eq(f.parts.length, 2); eq(f.units[2].part, f.parts[1]); eq(f.commit.length, 0x18000);
+    function problem(fw, board) { var x = I.cleanManifest(man(fw, board)); return x.firmware.length ? '' : x.problems.join(' '); }
+    ok(/path must be/.test(problem({ path: 'firmware/disp/app.bin' })));
+    ok(/size must be/.test(problem({ size: total - 1 })));
+    ok(/commit needs/.test(problem({ commit: {} })));
+    var gap = JSON.parse(JSON.stringify(parts)); gap[0].units[1][0] += 0x1000;
+    ok(/back to back/.test(problem({ parts: gap })));
+    var odd = JSON.parse(JSON.stringify(parts)); odd[1].path = 'firmware/disp/app/qspi.bin';
+    ok(/8 hex digits/.test(problem({ parts: odd })));
+    ok(/must be kind/.test(problem({ kind: undefined })));
+    ok(/needs a bridge board/.test(I.cleanManifest({ format: 1, boards: man().boards, firmware: [Object.assign({}, man().firmware[0], { board: 'dfu1', path: 'firmware/dfu1/app/' })] }).problems.join(' ')));
+    var nob = I.cleanManifest(man(null, { bridge: null }));
+    ok(!nob.boards.disp && /needs bridge/.test(nob.problems.join(' ')), 'a bridge board needs its port');
+  });
+
+  test('the demo’s display board updates through the simulated passthrough', async function () {
+    var c = await FL.catalog.loadDemo(), f = c.firmware.filter(function (x) { return x.kind === 'units'; })[0], b = c.boards[f.board];
+    eq(c.problems.length, 0, c.problems.join('; '));
+    var sim = c.demoDisplay(f.id); sim.latency = 0; sim.eraseMs = 0; sim.bootMs = 0;
+    var link = new B.Link(FB.port(sim));
+    await link.open(b.linkBaud);
+    var res = await B.update(link, { units: f.units, parts: f.parts, commit: f.commit }, { expect: b.expect, fastBaud: b.fastBaud, fetchPart: function (p) { return c.fetch(p); } });
+    eq(res.changed.length, 4, 'two code blocks and two picture blocks differ');
+    f.units.forEach(function (u) { eq(B.crc32(sim.read(u.addr, u.size)), u.crc); });
+    await link.close();
+  });
+
+  test('access: sharing a project copies and removes every part of a bridge board’s image', async function () {
+    var w = await world(), plan = bridgePlan(bridgeImage(12)), m = JSON.parse(w.gh.text(FL.config.repo, 'manifest.json'));
+    var files = w.gh.files(FL.config.repo), dir = 'firmware/b3/disp/', parts = [];
+    for (var i = 0; i < plan.image.parts.length; i++) {
+      var p = plan.image.parts[i], path = dir + p.addr.toString(16).padStart(8, '0') + '.bin';
+      files[path] = p.bytes;
+      parts.push({ path: path, addr: p.addr, size: p.size, sha256: await I.sha256(p.bytes), units: p.units.map(function (u) { return [u.addr, u.size, B.crc32(u.bytes)]; }) });
+    }
+    m.boards.b3 = { kind: 'bridge', name: 'Beta panel', project: 'beta', touch: [{ vid: 1, pid: 2 }], bridge: { vid: 1, pid: 3 } };
+    m.firmware.push({ id: 'disp', board: 'b3', name: 'Panel', kind: 'units', path: dir, parts: parts, size: parts.reduce(function (n, x) { return n + x.size; }, 0),
+      sha256: 'b'.repeat(64), commit: { crc32: plan.image.commit.crc, length: plan.image.commit.length } });
+    files['manifest.json'] = AC.dump(m);
+    await w.gh.repo(FL.config.repo, files, { collaborators: ['pat'] });
+    eq(AC.filesOf(m.firmware[3]).length, 2); eq(AC.filesOf(m.firmware[0]).length, 1);
+    var loaded = await AC.load(as(w, 'chris'));
+    var res = await AC.share(as(w, 'chris'), loaded.roster, 'beta');
+    var dst = w.gh.files('review-flasher-beta-box'), src = w.gh.files(FL.config.repo);
+    parts.forEach(function (x) { ok(dst[x.path], x.path + ' copied'); ok(!src[x.path], x.path + ' removed from the data repo'); });
+    var c = await FL.catalog.loadRepo('chris', w.gh.fetch), f = c.firmware.filter(function (x) { return x.kind === 'units'; })[0];
+    eq(f.repo, res.repo, 'listed from the shared repo');
+    var got = await c.fetch({ repo: f.repo, path: f.parts[1].path, sha256: f.parts[1].sha256 });
+    eq(got.length, f.parts[1].size, 'a part reads back from there');
   });
 
   // ── Run ──

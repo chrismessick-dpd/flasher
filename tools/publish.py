@@ -23,6 +23,10 @@ Usage (from the flasher folder):
     python tools/publish.py --source <sketchbook> --board-only     only the board's details (its run ids, button steps)
     python tools/publish.py --source <sketchbook> --push --confirm <code>   commit what the dry run showed
 
+A board updated through another board's USB passthrough (`"kind": "bridge"`, README, *Bridge
+boards*) publishes erase units, not a .bin: its image's `elf` is split into the units that
+flasher.json's `units` describes, each with its CRC-32, and stored as parts of up to 1 MB.
+
 `--source` can be left out once `tools/publish.local.json` (git-ignored) holds {"source": "<sketchbook>"}.
 
 The token comes from ../ee_tools_token.txt (or FLASHER_TOKEN). It is never printed. A push follows
@@ -30,7 +34,7 @@ the suite's rules for data repos: read the head, prove the manifest change is ad
 manifest with this publish undone re-serializes to the old bytes exactly), commit with force:false
 against that head, and read it back.
 """
-import argparse, base64, copy, datetime, hashlib, json, os, pathlib, re, shutil, subprocess, sys, urllib.error, urllib.request
+import argparse, base64, copy, datetime, hashlib, json, os, pathlib, re, shutil, struct, subprocess, sys, urllib.error, urllib.request, zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOKEN_FILE = ROOT.parent / "ee_tools_token.txt"
@@ -146,7 +150,7 @@ def plan_manifest(old_bytes, board, entries, now, project=None):
         i = next((k for k, f in enumerate(new["firmware"]) if f.get("id") == e["id"] and f.get("board") == bid), None)
         if i is not None:
             was = new["firmware"][i]
-            same = all(was.get(k) == e[k] for k in ("sha256", "size", "name", "summary", "description", "source", "path"))
+            same = all(was.get(k) == e.get(k) for k in ("sha256", "size", "name", "summary", "description", "source", "path", "kind", "parts", "commit"))
             if same:
                 continue
             new["firmware"][i] = dict(e, published=now)
@@ -191,14 +195,15 @@ def list_items(cfg, src):
         out = []
         for i, im in enumerate(cfg["images"]):
             name = im.get("name") or ""
-            if not name or "output" not in im or "source" not in im:
-                raise Fail(f"flasher.json's images #{i + 1} needs name, source, and output")
+            if not name or ("output" not in im and "elf" not in im) or "source" not in im:
+                raise Fail(f"flasher.json's images #{i + 1} needs name, source, and output (or elf)")
             d = src / im["source"]
             if not d.is_dir():
                 raise Fail(f"flasher.json's images #{i + 1}: source {d} isn't a folder")
             desc = im.get("description") or im.get("summary") or ""
             out.append({"name": name, "id": im.get("id") or fw_id(name), "rel": im["source"], "dir": d,
-                        "skip": [src / x for x in im.get("exclude", [])], "bin": src / im["output"],
+                        "skip": [src / x for x in im.get("exclude", [])],
+                        "bin": src / im["output"] if "output" in im else None, "elf": src / im["elf"] if "elf" in im else None,
                         "summary": im.get("summary") or " ".join(desc.split("\n\n")[0].split()), "description": desc})
         ids = [x["id"] for x in out]
         if len(set(ids)) != len(ids):
@@ -246,6 +251,131 @@ def board_from_manifest(manifest_bytes, bid, pid, full):
     if b.get("project", bid) != pid:
         raise Fail(f"board {bid} belongs to project {b.get('project')!r} in the manifest, not {pid!r}")
     return dict(b, id=bid)
+
+
+PART_WINDOW = 0x100000   # parts never cross a 1 MB boundary, so unchanged ones keep their path and bytes
+
+
+def elf_segments(b):
+    """The loadable segments of a little-endian ELF32 file: [(paddr, bytes)], in file order. Uses the
+    load address (paddr), where a section's initial values live in flash."""
+    if b[:4] != b"\x7fELF":
+        raise Fail("not an ELF file")
+    if b[4] != 1 or b[5] != 1:
+        raise Fail("only little-endian 32-bit ELF files are read")
+    phoff, = struct.unpack_from("<I", b, 28)
+    phentsize, phnum = struct.unpack_from("<HH", b, 42)
+    out = []
+    for i in range(phnum):
+        p_type, off, _vaddr, paddr, filesz, _memsz, _flags, _align = struct.unpack_from("<IIIIIIII", b, phoff + i * phentsize)
+        if p_type == 1 and filesz:   # PT_LOAD
+            if off + filesz > len(b):
+                raise Fail(f"segment {i} runs past the end of the file")
+            out.append((paddr, b[off:off + filesz]))
+    return out
+
+
+def unit_map(layout):
+    """flasher.json's units: {"skip": [[lo, hi]], "regions": [{"base", "sizes": [...]} or {"base", "end", "unit"},
+    "app": true for the regions COMMIT covers]}. Returns (unit_for(addr) -> (start, size, region index), skips, apps)."""
+    regions = []
+    for i, rg in enumerate(layout.get("regions") or []):
+        base = num(rg["base"])
+        if "sizes" in rg:
+            starts, at = [], base
+            for sz in rg["sizes"]:
+                starts.append((at, num(sz)))
+                at += num(sz)
+            regions.append((base, at, starts, None))
+        else:
+            unit, end = num(rg["unit"]), num(rg["end"])
+            if unit <= 0 or (end - base) % unit:
+                raise Fail(f"units region {i + 1}: end - base must be a whole number of units")
+            regions.append((base, end, None, unit))
+    if not regions:
+        raise Fail("flasher.json's units needs regions")
+    skips = [(num(a), num(z)) for a, z in layout.get("skip") or []]
+    apps = [i for i, rg in enumerate(layout["regions"]) if rg.get("app")]
+
+    def unit_for(addr):
+        for i, (lo, hi, starts, unit) in enumerate(regions):
+            if lo <= addr < hi:
+                if unit:
+                    return lo + (addr - lo) // unit * unit, unit, i
+                for start, size in starts:
+                    if start <= addr < start + size:
+                        return start, size, i
+        raise Fail(f"0x{addr:08X} is outside every units region (the bootloader's own sectors, or not flash)")
+    return unit_for, skips, apps
+
+
+def split_units(segments, layout):
+    """The image as erase units, as the reference host tool lays it out: each unit the image touches,
+    filled with 0xFF and the image's bytes laid over it (what it reads back as after an erase and a
+    write). Segments inside a skip range are left out. Returns ({start: bytearray}, {start: region}, skipped bytes)."""
+    unit_for, skips, _ = unit_map(layout)
+    units, region, skipped = {}, {}, 0
+    for addr, data in segments:
+        if any(lo <= addr < hi for lo, hi in skips):
+            skipped += len(data)
+            continue
+        pos = 0
+        while pos < len(data):
+            start, size, ri = unit_for(addr + pos)
+            buf = units.get(start)
+            if buf is None:
+                buf = units[start] = bytearray(b"\xff" * size)
+                region[start] = ri
+            off = addr + pos - start
+            n = min(len(data) - pos, size - off)
+            buf[off:off + n] = data[pos:pos + n]
+            pos += n
+    return units, region, skipped
+
+
+def group_parts(units):
+    """Back-to-back units within one 1 MB window, as [(addr, [unit starts])]."""
+    parts = []
+    for a in sorted(units):
+        if parts:
+            pa, members = parts[-1]
+            last = members[-1]
+            if last + len(units[last]) == a and pa // PART_WINDOW == a // PART_WINDOW:
+                members.append(a)
+                continue
+        parts.append((a, [a]))
+    return parts
+
+
+def units_entry(fid, bid, segments, layout):
+    """A kind "units" manifest entry (no name, source, or times yet) and its files {path: bytes}."""
+    units, region, skipped = split_units(segments, layout)
+    if not units:
+        raise Fail("the ELF has nothing to write in the units regions")
+    _, _, apps = unit_map(layout)
+    d = f"firmware/{bid}/{fid}/"
+    files, parts, whole = {}, [], hashlib.sha256()
+    for pa, members in group_parts(units):
+        data = b"".join(bytes(units[a]) for a in members)
+        path = d + f"{pa:08x}.bin"
+        files[path] = data
+        whole.update(data)
+        parts.append({"path": path, "addr": pa, "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                      "units": [[a, len(units[a]), zlib.crc32(units[a]) & 0xFFFFFFFF] for a in members]})
+    app = [a for a in sorted(units) if region[a] in apps]
+    if not app:
+        raise Fail("no unit is in a region marked app, so there is nothing for COMMIT to cover")
+    base = num(layout["regions"][apps[0]]["base"])
+    at = base
+    for a in app:
+        if a != at:
+            raise Fail(f"the application's units must run back to back from 0x{base:08X}; there is a gap at 0x{at:08X}")
+        at += len(units[a])
+    blob = b"".join(bytes(units[a]) for a in app)
+    total = sum(len(v) for v in units.values())
+    entry = {"kind": "units", "path": d, "parts": parts, "size": total, "sha256": whole.hexdigest(),
+             "commit": {"crc32": zlib.crc32(blob) & 0xFFFFFFFF, "length": len(blob)}}
+    return entry, files, {"units": len(units), "skipped": skipped, "app": len(blob)}
 
 
 # ── GitHub ──
@@ -360,7 +490,7 @@ def main(argv=None):
         raise Fail(f"board id {bid!r} may only use a-z, 0-9, _ and -")
     if not board_ref:
         board = dict(board, project=pid)
-        for k in ("flash", "ram", "dfu"):
+        for k in (("touch", "bridge") if board.get("kind") == "bridge" else ("flash", "ram", "dfu")):
             if k not in board:
                 raise Fail(f"flasher.json's board needs {k}")
 
@@ -415,12 +545,23 @@ def main(argv=None):
     if dep_dirty:
         warnings.append("the board package (" + ", ".join(dep_rels) + ") has uncommitted changes")
 
+    bridged = (board.get("kind") == "bridge") if not board_ref else None
     for it in items:
-        n, binp = it["name"], it["bin"]
+        n, binp = it["name"], it.get("elf") or it["bin"]
         if not binp.exists():
             problems.append(f"{n}: {binp} not built")
             continue
         b = binp.read_bytes()
+        if it.get("elf"):
+            if bridged is False:
+                raise Fail(f"{n}: an elf image is for a bridge board (\"kind\": \"bridge\")")
+            if "units" not in cfg:
+                raise Fail("flasher.json needs units (the erase units) to publish an elf image")
+            ue, ufiles, stats = units_entry(it["id"], bid, elf_segments(b), cfg["units"])
+            print(f"  {n}: {stats['units']} erase units, {ue['size']} bytes in {len(ue['parts'])} parts; "
+                  f"COMMIT covers {stats['app']} bytes; {stats['skipped']} bytes left out (skip ranges)")
+        elif bridged:
+            raise Fail(f"{n}: a bridge board's image must be an elf (published as erase units)")
         newest = max(newest_in(it["dir"], it["skip"]), dep_newest)
         if binp.stat().st_mtime < newest:
             warnings.append(f"{n}: the .bin is older than its source; build again (drop --no-build)")
@@ -429,13 +570,19 @@ def main(argv=None):
         if dirty and not a.allow_dirty:
             problems.append(f"{n}: has uncommitted changes (commit them, or pass --allow-dirty to publish marked)")
             continue
-        built.append({
+        e = {
             "id": it["id"], "board": bid, "name": n, "summary": it["summary"], "description": it["description"],
             "size": len(b), "sha256": hashlib.sha256(b).hexdigest(), "path": f"firmware/{bid}/{it['id']}.bin",
             "source": {"repo": repo_name, "sha": sha, "path": rel, "dirty": dirty},
             "built": datetime.datetime.fromtimestamp(binp.stat().st_mtime, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "_bytes": b,
-        })
+            "_bytes": b, "_files": None,
+        }
+        if it.get("elf"):
+            e.update({k: v for k, v in ue.items()})
+            e["_files"] = ufiles
+        else:
+            e["_files"] = {e["path"]: b}
+        built.append(e)
 
     print(f"\nSource   {repo_name} @ {sha[:10]}  ({src})")
     print(f"Board    {bid}{' (as the manifest has it)' if board_ref else ': ' + board.get('name', bid)}  (project {pid}: {pname})")
@@ -461,7 +608,11 @@ def main(argv=None):
 
     entries = []
     for e in built:
-        errs = check_image(e["_bytes"], board)
+        if (board.get("kind") == "bridge") != (e.get("kind") == "units"):
+            problems.append(f"{e['name']}: board {bid} is {'a bridge board' if board.get('kind') == 'bridge' else 'a DFU board'}, "
+                            "so its images must be " + ("an elf" if board.get("kind") == "bridge" else "a .bin"))
+            continue
+        errs = [] if e.get("kind") == "units" else check_image(e["_bytes"], board)
         if errs:
             problems.append(f"{e['name']}: " + "; ".join(errs))
         else:
@@ -473,7 +624,7 @@ def main(argv=None):
     if not entries and not a.board_only:
         raise Fail("nothing to publish")
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    clean = [{k: v for k, v in e.items() if k != "_bytes"} for e in entries]
+    clean = [{k: v for k, v in e.items() if not k.startswith("_")} for e in entries]
     if "missing" in repo:
         print(f"\n{full} is {repo['missing']}. A first publish would write:")
         new_bytes, changed, _ = plan_manifest(None, board, clean, now, (pid, pname))
@@ -487,11 +638,17 @@ def main(argv=None):
     files = {}
     print(f"\nPlan against {full} @ {repo['head'][:10]}:")
     for e in entries:
-        same_blob = repo["entries"].get(e["path"]) == git_blob_sha(e["_bytes"])
-        state = "changed" if e["id"] in changed and e["path"] in repo["entries"] else "new" if e["id"] in changed else "unchanged"
-        if e["id"] in changed and not same_blob:
-            files[e["path"]] = e["_bytes"]
+        had = any(p in repo["entries"] for p in e["_files"])
+        state = "changed" if e["id"] in changed and had else "new" if e["id"] in changed else "unchanged"
+        fresh = 0
+        if e["id"] in changed:
+            for path, data in e["_files"].items():
+                if repo["entries"].get(path) != git_blob_sha(data):
+                    files[path] = data
+                    fresh += 1
         print(f"  {state:<10} {e['path']:<40} {e['size']:>8} bytes  {e['summary'][:60]}")
+        if len(e["_files"]) > 1 and e["id"] in changed:
+            print(f"             {fresh} of {len(e['_files'])} parts to upload; the rest are already there byte for byte")
     if changed or board_changed:
         files["manifest.json"] = new_bytes
         what = "the board's details change too; " if board_changed else ""

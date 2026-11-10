@@ -27,6 +27,10 @@
   function parse(bytes) { return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : null; }
   function copy(o) { return JSON.parse(JSON.stringify(o)); }
 
+  // The files a manifest entry is stored in: one .bin, or (kind "units", a bridge board's image) its parts.
+  function filesOf(f) {
+    return f.kind === 'units' && Array.isArray(f.parts) ? f.parts.map(function (x) { return { path: x.path, sha256: x.sha256 }; }) : [{ path: f.path, sha256: f.sha256 }];
+  }
   function projectOf(boardId, board) { return (board && typeof board.project === 'string' && board.project) || boardId; }
 
   // { id: name } for a raw manifest's projects.
@@ -208,8 +212,9 @@
       dstFull = full(repo); dst = store(dstFull, ctx);
       return acct.disableActions(FL.config.owner, repo).catch(function () { log('Couldn’t turn off GitHub Actions on ' + dstFull + '; do it in its settings.'); });
     }).then(function () {
-      log('Copying ' + parts.firmware.length + ' firmware file' + (parts.firmware.length === 1 ? '' : 's') + '…');
-      return Promise.all(parts.firmware.map(function (f) {
+      var all = [].concat.apply([], parts.firmware.map(filesOf));
+      log('Copying ' + all.length + ' firmware file' + (all.length === 1 ? '' : 's') + '…');
+      return Promise.all(all.map(function (f) {
         return data.readVerified(f.path, f.sha256, src.entries).then(function (bytes) { return { path: f.path, bytes: bytes }; });
       }));
     }).then(function (files) {
@@ -240,7 +245,7 @@
     }).then(function (merged) {
       roster = merged;
       log('Removing the originals from ' + dataFull() + '…');
-      var files = [{ path: 'manifest.json', text: dump(parts.keep) }].concat(parts.firmware.map(function (f) { return { path: f.path, remove: true }; }));
+      var files = [{ path: 'manifest.json', text: dump(parts.keep) }].concat([].concat.apply([], parts.firmware.map(filesOf)).map(function (f) { return { path: f.path, remove: true }; }));
       return data.putFiles(files, { message: 'Flasher: ' + name + ' moved to ' + dstFull });
     }).then(function () {
       var ftes = M.liveUsers(roster).filter(function (u) { return u.role === 'fte' && u.login !== FL.config.owner.toLowerCase(); }).map(function (u) { return u.login; });
@@ -248,6 +253,6 @@
     }).then(function (failed) { return { repo: dstFull, roster: roster, failed: failed }; });
   }
 
-  FL.access = { PREFIX: PREFIX, full: full, dataFull: dataFull, dump: dump, projectOf: projectOf, projectsIn: projectsIn, split: split,
+  FL.access = { PREFIX: PREFIX, full: full, dataFull: dataFull, dump: dump, filesOf: filesOf, projectOf: projectOf, projectsIn: projectsIn, split: split,
     readRepo: readRepo, load: load, combine: combine, saveRoster: saveRoster, invite: invite, revoke: revoke, accessMap: accessMap, share: share };
 })(window.FL = window.FL || {});

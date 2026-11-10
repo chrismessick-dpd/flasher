@@ -43,6 +43,16 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   committed in its repo. Published at Chris's OK: the image and its board to `flasher_data`
   (`44cec31`), and `runAlso` on the Arduino board (shared repo `d1ee712`, `--board-only`). Not yet
   tried from the page.
+  Then Chris flashed it from the hosted page (2026-11-10).
+- **Bridge boards (2026-11-10, Chris; not committed):** a board with no USB of its own, updated
+  through a host board's passthrough from the page (README, *Bridge boards*; `assets/sboot.js`,
+  simulated by `assets/fakebridge.js`). The client's display is the first: its board and image are
+  in `flasher_data` under the FTE-only firmware project once published, with `flasher.json`
+  in the display repo. `publish.py` splits the ELF into erase units exactly as the client's own
+  host tool does (checked against that tool on the real ELF). Sharing a project
+  copies and removes every part (`FL.access.filesOf`). The demo has one: the thermostat's Display &
+  Sensor Board through the Main PCBA. The protocol's framing is public at Chris's OK; memory maps
+  and USB ids stay in the manifest.
 
 ## Rules
 
@@ -100,8 +110,8 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 
 1. Run `python tools/stamp_version.py`.
 2. Serve the tools folder with preview `signoff-suite-alt` (port 8774), and open
-   `flasher/tests/test.html`. It should show PASS (44 tests as of 2026-11-10).
-3. Run `python tests/test_publish.py` (18 tests).
+   `flasher/tests/test.html`. It should show PASS (55 tests as of 2026-11-10).
+3. Run `python tests/test_publish.py` (24 tests).
 4. Check `flasher/index.html?demo` and flash something: the simulated flash takes about 5 s.
 5. In the browser pane, scripts are cached: fetch changed files with `{cache: 'reload'}` before
    reloading.

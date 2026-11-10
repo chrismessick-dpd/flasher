@@ -188,5 +188,81 @@ class BoardRef(unittest.TestCase):
         with self.assertRaises(P.Fail):
             P.board_from_manifest(None, "test-g4", "tstat", "o/r")
 
+def elf32(segments):
+    """A minimal little-endian ELF32 file with one PT_LOAD per (paddr, bytes)."""
+    import struct
+    ph = 52
+    data_at = ph + 32 * len(segments)
+    head = bytearray(b"\x7fELF" + bytes([1, 1, 1]) + bytes(9))
+    head += struct.pack("<HHIIIIIHHHHHH", 2, 40, 1, 0, ph, 0, 0, 52, 32, len(segments), 40, 0, 0)
+    phs, body, at = bytearray(), bytearray(), data_at
+    for paddr, b in segments:
+        phs += struct.pack("<IIIIIIII", 1, at, paddr | 0x10000000, paddr, len(b), len(b), 5, 4)
+        body += b
+        at += len(b)
+    return bytes(head + phs + body)
+
+
+LAYOUT = {"skip": [["0x0800C000", "0x08010000"]],
+          "regions": [{"base": "0x08010000", "sizes": ["0x8000", "0x10000", "0x10000"], "app": True},
+                      {"base": "0x70000000", "end": "0x70400000", "unit": "0x10000"}]}
+
+
+class Units(unittest.TestCase):
+    """Bridge boards: an ELF split into erase units, as the reference host tool lays them out."""
+
+    def test_crc_vector(self):
+        import zlib
+        self.assertEqual(zlib.crc32(b"123456789") & 0xFFFFFFFF, 0xCBF43926)
+
+    def test_split(self):
+        segs = P.elf_segments(elf32([(0x0800C000, b"SWDP"), (0x08010000, b"\x01" * 0x8010), (0x7000FFF0, b"\x02" * 0x20)]))
+        self.assertEqual([a for a, _ in segs], [0x0800C000, 0x08010000, 0x7000FFF0], "load addresses")
+        units, region, skipped = P.split_units(segs, LAYOUT)
+        self.assertEqual(skipped, 4, "the record sector is left out")
+        self.assertEqual(sorted(units), [0x08010000, 0x08018000, 0x70000000, 0x70010000], "a segment spills into the next unit")
+        self.assertEqual(len(units[0x08018000]), 0x10000)
+        self.assertEqual(units[0x08018000][:0x10], b"\x01" * 0x10)
+        self.assertEqual(units[0x08018000][0x10:0x20], b"\xff" * 0x10, "0xFF past the image")
+        self.assertEqual(units[0x70000000][0xFFF0:], b"\x02" * 0x10)
+        self.assertEqual((region[0x08010000], region[0x70010000]), (0, 1))
+
+    def test_outside(self):
+        with self.assertRaises(P.Fail):
+            P.split_units([(0x08000000, b"boot")], LAYOUT)
+        with self.assertRaises(P.Fail):
+            P.elf_segments(b"MZ" + bytes(60))
+
+    def test_entry(self):
+        import zlib
+        segs = [(0x08010000, b"\x01" * 0x100), (0x08018000, b"\x03" * 0x10)] + [(0x70000000 + k * 0x10000, bytes([k]) * 0x10000) for k in range(20)]
+        e, files, stats = P.units_entry("disp", "b", segs, LAYOUT)
+        self.assertEqual(e["kind"], "units")
+        self.assertEqual(e["path"], "firmware/b/disp/")
+        self.assertEqual([p["addr"] for p in e["parts"]], [0x08010000, 0x70000000, 0x70100000], "1 MB windows")
+        self.assertEqual(e["parts"][1]["size"], 0x100000)
+        self.assertEqual(sorted(files), [p["path"] for p in e["parts"]])
+        self.assertEqual(e["parts"][0]["path"], "firmware/b/disp/08010000.bin")
+        app = files["firmware/b/disp/08010000.bin"]
+        self.assertEqual(e["commit"], {"crc32": zlib.crc32(app) & 0xFFFFFFFF, "length": 0x18000})
+        u = e["parts"][1]["units"][3]
+        self.assertEqual(u, [0x70030000, 0x10000, zlib.crc32(bytes([3]) * 0x10000) & 0xFFFFFFFF])
+        self.assertEqual(e["size"], sum(len(b) for b in files.values()))
+        self.assertEqual(stats["units"], 22)
+
+    def test_app_gap(self):
+        with self.assertRaises(P.Fail):
+            P.units_entry("disp", "b", [(0x08018000, b"\x01")], LAYOUT)
+
+    def test_republish_is_the_same(self):
+        segs = [(0x08010000, b"\x01" * 0x100)]
+        e1, _, _ = P.units_entry("disp", "b", segs, LAYOUT)
+        old, _, _ = P.plan_manifest(None, BOARD, [dict(entry("disp"), **e1)], NOW)
+        _, changed, _ = P.plan_manifest(old, BOARD, [dict(entry("disp"), **e1)], LATER)
+        self.assertEqual(changed, [])
+        e2, _, _ = P.units_entry("disp", "b", [(0x08010000, b"\x02" * 0x100)], LAYOUT)
+        _, changed, _ = P.plan_manifest(old, BOARD, [dict(entry("disp"), **e2)], LATER)
+        self.assertEqual(changed, ["disp"], "new parts change the entry")
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

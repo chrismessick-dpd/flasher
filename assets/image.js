@@ -70,6 +70,7 @@
     var bad = function (why) { problems.push('Board “' + id + '”: ' + why); return null; };
     if (!/^[a-z0-9][a-z0-9_-]{0,47}$/.test(id)) return bad('the id may only use a–z, 0–9, _ and -.');
     if (!b || typeof b !== 'object') return bad('not an object.');
+    if (b.kind === 'bridge') return cleanBridge(id, b, bad);
     var flash = mem(b.flash), ram = mem(b.ram), dfu = usb(b.dfu);
     if (!flash) return bad('flash needs base and size.');
     if (!ram) return bad('ram needs base and size.');
@@ -88,6 +89,55 @@
     };
   }
 
+  /* A board with no USB of its own, updated through another board's bridge (assets/sboot.js;
+     README, *Bridge boards*): touch lists the host firmware that takes the touchBaud touch (run is
+     its first, as for a DFU board), bridge is the port that appears, and expect is what the
+     bootloader's INFO must say. */
+  function cleanBridge(id, b, bad) {
+    var touch = (Array.isArray(b.touch) ? b.touch : []).map(usb).filter(Boolean).slice(0, 8), bridge = usb(b.bridge);
+    if (!touch.length) return bad('a bridge board needs touch: the USB ids of the host firmware that opens the bridge.');
+    if (!bridge) return bad('a bridge board needs bridge: the USB id of the bridge’s serial port.');
+    var ex = b.expect && typeof b.expect === 'object' ? b.expect : {}, opt = function (v) { var n = num(v); return n >= 0 ? n : null; };
+    var link = num(b.linkBaud) || 1000000, fast = num(b.fastBaud) || 0, touchBaud = num(b.touchBaud) || 2400, exitBaud = num(b.exitBaud) || 1200;
+    if (touchBaud === exitBaud || link === exitBaud || fast === exitBaud) return bad('touchBaud, linkBaud, fastBaud, and exitBaud must differ from the exit rate.');
+    return {
+      id: id, kind: 'bridge', name: str(b.name, 80) || id, mcu: str(b.mcu, 60), notes: str(b.notes, 1200),
+      run: touch[0], runs: touch, touchBaud: touchBaud, exitBaud: exitBaud, bridge: bridge, linkBaud: link, fastBaud: fast,
+      expect: { device: opt(ex.device), appBase: opt(ex.appBase), qspiBase: opt(ex.qspiBase), singleBank: !!ex.singleBank },
+      manualDfu: [], flash: null, ram: null, dfu: null
+    };
+  }
+
+  /* A firmware entry made of erase units (kind "units"), for a bridge board: its parts are files
+     under path, each a run of whole units, and every unit carries its CRC-32. Returns the cleaned
+     fields or a reason (string). */
+  function cleanUnits(f) {
+    var dir = 'firmware/' + f.board + '/' + f.id + '/';
+    if (f.path !== dir) return 'path must be ' + dir + '.';
+    if (!Array.isArray(f.parts) || !f.parts.length || f.parts.length > 512) return 'parts must list the files.';
+    var parts = [], units = [], last = -1, total = 0;
+    for (var i = 0; i < f.parts.length; i++) {
+      var p = f.parts[i] || {}, addr = num(p.addr), size = num(p.size);
+      if (typeof p.path !== 'string' || p.path.indexOf(dir) !== 0 || !/^[0-9a-f]{8}\.bin$/.test(p.path.slice(dir.length))) return 'part ' + (i + 1) + ': path must be ' + dir + '<8 hex digits>.bin.';
+      if (!(addr >= 0) || !(size > 0) || !/^[0-9a-f]{64}$/.test(p.sha256 || '')) return 'part ' + (i + 1) + ': needs addr, size, and sha256.';
+      var part = { path: p.path, addr: addr, size: size, sha256: p.sha256 }, at = addr;
+      if (!Array.isArray(p.units) || !p.units.length) return 'part ' + (i + 1) + ': units must list its erase units.';
+      for (var k = 0; k < p.units.length; k++) {
+        var u = p.units[k] || [], ua = num(u[0]), us = num(u[1]), uc = num(u[2]);
+        if (ua !== at || !(us > 0) || !(uc >= 0 && uc <= 0xFFFFFFFF)) return 'part ' + (i + 1) + ': its units must be [addr, size, crc32], back to back from its addr.';
+        if (ua <= last) return 'parts must be in address order without overlaps.';
+        units.push({ addr: ua, size: us, crc: uc >>> 0, part: part });
+        at += us; last = ua + us - 1;
+      }
+      if (at - addr !== size) return 'part ' + (i + 1) + ': its units add up to ' + (at - addr) + ' bytes, not its size ' + size + '.';
+      parts.push(part); total += size;
+    }
+    var cm = f.commit || {}, ccrc = num(cm.crc32), clen = num(cm.length);
+    if (!(ccrc >= 0) || !(clen > 0)) return 'commit needs crc32 and length.';
+    if (f.size !== total) return 'size must be the parts’ total, ' + total + '.';
+    return { parts: parts, units: units, commit: { crc: ccrc >>> 0, length: clen } };
+  }
+
   /* Validate a parsed manifest: { boards: {id: board}, firmware: [entry], problems: [text] }.
      A firmware entry whose board is unknown, or whose path isn't firmware/<board>/<id>.bin, is dropped. */
   function cleanManifest(m) {
@@ -100,7 +150,10 @@
       if (!f || typeof f !== 'object') return problems.push(label + ': not an object.');
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.id || '')) return problems.push(label + ': bad id.');
       if (!boards[f.board]) return problems.push(label + ': unknown board “' + str(f.board, 40) + '”.');
-      if (f.path !== 'firmware/' + f.board + '/' + f.id + '.bin') return problems.push(label + ': path must be firmware/' + f.board + '/' + f.id + '.bin.');
+      var bridged = boards[f.board].kind === 'bridge', units = null;
+      if (bridged !== (f.kind === 'units')) return problems.push(label + ': ' + (bridged ? 'a bridge board’s firmware must be kind “units”.' : 'firmware of kind “units” needs a bridge board.'));
+      if (bridged) { units = cleanUnits(f); if (typeof units === 'string') return problems.push(label + ': ' + units); }
+      else if (f.path !== 'firmware/' + f.board + '/' + f.id + '.bin') return problems.push(label + ': path must be firmware/' + f.board + '/' + f.id + '.bin.');
       if (!/^[0-9a-f]{64}$/.test(f.sha256 || '')) return problems.push(label + ': sha256 must be 64 hex digits.');
       if (!(f.size > 0)) return problems.push(label + ': bad size.');
       var src = f.source && typeof f.source === 'object' ? f.source : {};
@@ -109,6 +162,7 @@
         size: f.size, sha256: f.sha256, path: f.path, built: str(f.built, 40), published: str(f.published, 40),
         source: { repo: str(src.repo, 100), sha: /^[0-9a-f]{7,40}$/.test(src.sha || '') ? src.sha : '', path: str(src.path, 200), dirty: !!src.dirty }
       });
+      if (units) { var e = firmware[firmware.length - 1]; e.kind = 'units'; e.parts = units.parts; e.units = units.units; e.commit = units.commit; }
     });
     return { boards: boards, firmware: firmware, problems: problems };
   }

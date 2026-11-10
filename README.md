@@ -45,6 +45,31 @@ Before anything is erased, an image must:
 
 ELF and Intel HEX files are recognized and refused with a pointer to the `.bin`.
 
+## Bridge boards
+
+Some boards have no USB port of their own: a UART bootloader, reached through another board (the
+host) that turns its USB serial port into a passthrough. Flasher updates them the same way from the
+page, with Web Serial only (`assets/sboot.js`):
+
+1. The host's firmware gets a baud-rate touch (`touchBaud`, 2400 by default), and comes back on USB
+   as the passthrough port (`bridge`), with the board held in its bootloader. The first time,
+   Chrome's list needs a click for each port; after that it's one click.
+2. Flasher asks the bootloader who it is (INFO) and checks it against the board's `expect`, then
+   moves the link to `fastBaud` if the board has one (SET_BAUD, then close and reopen at that rate).
+3. It asks the CRC-32 of every erase unit in the image, downloads only the parts that hold a unit
+   that differs, checks those against their CRCs, and only then begins: BEGIN, then erase, write
+   (4 KB at a time, skipping blocks that are all 0xFF), and read back each unit, then COMMIT and GO.
+   **Compare only** stops after the CRCs and changes nothing.
+4. Opening the passthrough at `exitBaud` (1200) sends the host back to its own firmware, which
+   restarts the board. That happens after a failure too. A board whose update was begun and not
+   finished waits in its bootloader until an update finishes, so an interrupted update is run again.
+
+The protocol is Dovetail's serial bootloader protocol 1: frames of `55 A5 | cmd | seq | len16 |
+payload | crc32` (responses `5A C3`, `cmd | 0x80`, a status byte first), zlib's CRC-32 over
+everything after the sync. A response to an older request is read past; only a timeout or a
+damaged-frame answer resends. A COMMIT whose answer was lost is refused when resent; Flasher then
+reads the record from INFO.
+
 ## Windows driver
 
 Chrome and Edge reach a USB device on Windows only when it uses WinUSB. The board's serial port
@@ -158,6 +183,13 @@ users.json            flasher_data only: the People list
   built for it), each restarted with the same touch. Flasher looks for any of them, and the browser's
   list offers them all. It is kept apart from `run` so an older page still reads the manifest.
 - `layout` is the DfuSe layout to use if the browser can't read the device's alternate setting names.
+- A bridge board (*Bridge boards* above) is `"kind": "bridge"`, with `touch` (the host firmware's USB
+  ids, a list), `bridge` (the passthrough port's id), `touchBaud`, `exitBaud`, `linkBaud`,
+  `fastBaud`, and `expect` (`device`, `appBase`, `qspiBase`, `singleBank`, as INFO reports them). It
+  has no `flash`, `ram`, or `dfu`. Its firmware is `"kind": "units"`: `path` is a folder,
+  `parts` lists its files (`<path><8 hex digits of the address>.bin`, each with `addr`, `size`,
+  `sha256`, and `units`: `[addr, size, crc32]` back to back), `size` is their total, and `commit`
+  (`crc32`, `length`) is what COMMIT sends, over the units in the application's region.
 - Numbers may be JSON numbers or `"0x…"` strings.
 - Entries that don't validate are skipped and listed on the page (`FL.image.cleanManifest`).
 
@@ -173,6 +205,13 @@ firmware repo describes itself in a `flasher.json` at its sketchbook root:
 - `depends` (what every sketch builds against, such as the board package; counted in the dirty and stale checks);
 - `build` (the command, run from the sketchbook with the sketch folders appended);
 - `output` (`build/{name}/{name}.ino.bin`).
+
+A bridge board's image is an `elf` in place of `output`, and `flasher.json` then has `units`, the
+board's erase units: `skip` (address ranges left out, such as a record the bootloader owns) and
+`regions`, each `{ "base", "sizes": [...] }` (sectors of different sizes) or `{ "base", "end",
+"unit" }`, with `"app": true` on the regions COMMIT covers. Each unit the ELF's load segments touch
+is filled with 0xFF and the image laid over it, exactly as the board reads it back. Units are stored
+in parts that never cross a 1 MB boundary, so an update to code alone uploads only its own part.
 
 A firmware repo that builds one image as a whole, rather than a folder of sketches, lists `images`
 in place of `examples` and `output`. Each image has `name`, `source` (the folder whose changes count
@@ -222,6 +261,8 @@ project is shared, its `review-flasher-*` repo must be among the token's reposit
 | `assets/dfuse.js` | DfuSe over WebUSB: layout and descriptor parsing, erase, write, read, and leave |
 | `assets/image.js` | Image checks, SHA-256, and manifest validation; the generic STM32 board for local files |
 | `assets/serial.js` | The 1200-baud touch, and the serial port under the console |
+| `assets/sboot.js` | Bridge boards: the serial bootloader protocol over Web Serial, and the update |
+| `assets/fakebridge.js` | A simulated bridge board's bootloader behind a fake serial port (tests and `?demo`) |
 | `assets/term.js` | The console's terminal: the screen, escape codes, and the keys |
 | `assets/access.js` | Access: reading by role, the People list, sharing a project, and invitations |
 | `assets/fakeusb.js` | A simulated STM32 ROM bootloader, serial port, and firmware console (tests and `?demo`) |
