@@ -210,7 +210,7 @@
       var opts = Object.keys(boards()).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + '</option>'; }).join('');
       h += '<div class="card fl-pad"><div class="field"><label for="local-board">Board</label><select class="input" id="local-board" data-change="local-board">' + opts +
         '<option value=""' + (S.local.boardId && boards()[S.local.boardId] ? '' : ' selected') + '>' + esc(I.GENERIC.name) + '</option></select></div>' +
-        '<p class="note">The board decides the checks (flash size, RAM) and how it’s restarted into DFU mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p></div>';
+        '<p class="note">The board decides the checks (flash size, RAM) and how it’s put in update mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p></div>';
     } else if (fw.description) {
       // Collapsible; the choice is kept for this browser (flasher.v1.about).
       h += '<details class="card fl-about" data-toggle="about"' + (aboutOpen() ? ' open' : '') + '><summary><span class="fl-about-title">About this firmware</span>' +
@@ -250,41 +250,47 @@
     var h = '<div class="fl-flash">';
     if (chk && chk.errors.length) h += '<div class="hint fl-bad"><b>This image can’t be flashed</b>' + chk.errors.map(esc).join('<br>') + '</div>';
     if (chk && chk.warnings.length) h += '<div class="hint fl-warn"><b>Check</b>' + chk.warnings.map(esc).join('<br>') + '</div>';
-    var canTouch = !!(b.run && (DEMO || navigator.serial));
+    var canTouch = !!(b.run && (DEMO || navigator.serial)), byHand = !canTouch || S.skipTouch;
+    var dfuName = b.dfu.name || 'DFU in FS Mode';
+    h += '<p class="fl-intro">Connect the board to USB and click <b>Flash board</b>. When first connected, Chrome may ask you to pick the board twice. After that flashing is one click.</p>';
     h += '<ol class="fl-steps">';
-    h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Restart into the bootloader</div>' +
-      (canTouch
-        ? '<div class="fl-step-sub">' + (S.skipTouch ? 'Skipped: the board is already in DFU mode.' : 'Flasher asks the running board (“' + esc(b.run.name || 'USB serial') + '”) to restart into its USB bootloader. The first time, pick its port in the browser’s list.') + '</div>' +
-          '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board is already in DFU mode, or is blank</label>'
-        : '<div class="fl-step-sub">Put the board in DFU mode by hand (below).</div>') +
+    h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Put the board in update mode</div>' +
+      (canTouch && !S.skipTouch
+        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(b.run.name || 'the board') + '</b> and click <b>Connect</b>.</div>'
+        : '<div class="fl-step-sub">Press these on the board, then click <b>Flash board</b>:</div>' + buttonsHtml(b)) +
+      (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board isn’t running firmware (new, blank, or stuck)</label>' : '') +
       '</div></li>';
-    h += '<li class="fl-step ' + stepState(run, 'write') + '"><span class="fl-num">2</span><div><div class="fl-step-title">Erase, write, and verify</div>' +
-      '<div class="fl-step-sub">Pick “' + esc(b.dfu.name || 'DFU in FS Mode') + '” (USB ' + hex4(b.dfu.vid) + ':' + hex4(b.dfu.pid) + ') the first time. The whole image is read back and compared.</div>' +
-      (run && (run.step === 'write' || run.ok) ? '<div class="busy-bar fl-bar"><i style="width:' + Math.round((run.ok ? 1 : run.pct || 0) * 100) + '%"></i></div><div class="fl-step-sub fl-phase">' + esc(run.ok ? 'Written and verified' : run.phase || '') + '</div>' : '') +
+    h += '<li class="fl-step ' + stepState(run, 'write') + '"><span class="fl-num">2</span><div><div class="fl-step-title">Write the firmware</div>' +
+      '<div class="fl-step-sub"><i>First time:</i> Chrome shows ' + (byHand ? 'a' : 'a second') + ' list. Pick <b>' + esc(dfuName) + '</b> and click <b>Connect</b>. Flasher erases the board, writes the firmware, and reads it back to check every byte.</div>' +
+      (run && (run.step === 'write' || run.ok) ? '<div class="busy-bar fl-bar"><i style="width:' + Math.round((run.ok ? 1 : run.pct || 0) * 100) + '%"></i></div><div class="fl-step-sub fl-phase">' + esc(run.ok ? 'Written and checked' : run.phase || '') + '</div>' : '') +
       '</div></li>';
-    h += '<li class="fl-step ' + stepState(run, 'start') + '"><span class="fl-num">3</span><div><div class="fl-step-title">Start the firmware</div>' +
-      '<div class="fl-step-sub">The board leaves the bootloader and runs what was just written.</div></div></li>';
+    h += '<li class="fl-step ' + stepState(run, 'start') + '"><span class="fl-num">3</span><div><div class="fl-step-title">Run it</div>' +
+      '<div class="fl-step-sub">The board restarts and runs the new firmware. Nothing to do.</div></div></li>';
     h += '</ol>';
     if (run && run.error) h += '<div class="hint fl-bad"><b>' + esc(run.errorTitle || 'The flash stopped') + '</b>' + esc(run.error) + (run.errorHelp ? '<div class="fl-help">' + run.errorHelp + '</div>' : '') + '</div>';
     if (run && run.ok) h += '<div class="hint fl-good"><b>Done</b>' + esc(c.fw.name) + ' is on the board and running (' + esc(I.fmtBytes(run.bytes)) + ', ' + run.pages + ' pages, verified) in ' + (run.ms / 1000).toFixed(1) + ' s.</div>';
     h += '<div class="fl-row">';
     var blocked = (chk && chk.errors.length) || (!DEMO && !navigator.usb) || !S.bytesReady;
-    if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">Choose the board in DFU mode</button>';
+    if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">Pick ' + esc(b.dfu.name || 'DFU in FS Mode') + '</button>';
     else h += '<button class="btn btn-primary" data-act="flash"' + (busy || blocked ? ' disabled' : '') + '>' + (busy ? 'Flashing…' : run && run.ok ? 'Flash again' : 'Flash board') + '</button>';
     if (run && run.ok && b.run && (DEMO || navigator.serial)) h += '<button class="btn" data-act="console">Open console</button>';
     if (!S.bytesReady && !S.bytesError) h += '<span class="fl-muted">Fetching the image…</span>';
     if (S.bytesError) h += '<span class="fl-muted fl-bad-text">' + esc(S.bytesError) + '</span>';
     h += '</div>';
     if (run && run.log.length) h += '<details class="fl-log"' + (run.error ? ' open' : '') + '><summary>Details</summary><div class="log">' + run.log.map(function (l) { return '<div class="' + (l.cls || '') + '">' + esc(l.text) + '</div>'; }).join('') + '</div></details>';
-    h += '<details class="guide fl-manual"><summary>Board not showing up, or blank?</summary>' + manualHtml(b) + '</details>';
+    h += '<details class="guide fl-manual"><summary>Board not in Chrome’s list?</summary><p>Close the Arduino IDE and any serial monitor, try another USB cable (some only charge), or set up the <a href="#" data-act="driver">Windows driver</a>.</p>' +
+      '<p class="fl-muted">For the curious: update mode is the chip’s USB bootloader (DFU, USB ' + hex4(b.dfu.vid) + ':' + hex4(b.dfu.pid) + '), built into its ROM, so a failed flash can always be retried.</p></details>';
     return h + '</div>';
   }
 
-  function manualHtml(b) {
+  // The board's own steps into update mode, pressed by hand.
+  function buttonsHtml(b) {
     var steps = b.manualDfu.length ? b.manualDfu : I.GENERIC.manualDfu;
-    return '<p>Put it in DFU mode by hand, then tick “already in DFU mode” and flash:</p><ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
-      '<p>The bootloader is in the chip’s ROM, so a failed or interrupted flash can always be retried this way.</p>' +
-      '<p>On Windows, if “' + esc(b.dfu.name || 'DFU in FS Mode') + '” never appears in the browser’s list, the board needs the WinUSB driver: <a href="#" data-act="driver">Windows driver help</a>.</p>';
+    return '<ol class="fl-buttons">' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+  }
+  function manualHtml(b) {
+    return '<p>Press these on the board, then tick “The board isn’t running firmware” and click <b>Flash board</b> again:</p>' + buttonsHtml(b) +
+      '<p>A failed or interrupted flash can always be retried this way. If “' + esc(b.dfu.name || 'DFU in FS Mode') + '” never appears in Chrome’s list on Windows, set up the <a href="#" data-act="driver">Windows driver</a>.</p>';
   }
 
   function consoleHtml(c) {
@@ -369,14 +375,14 @@
     S.con = null; S.tab = 'flash';
     upd();
     closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
-      if (dev) { log('Found the board already in DFU mode (' + dev.productName + ').'); return dev; }
+      if (dev) { log('Found the board already in update mode (' + dev.productName + ').'); return dev; }
       if (S.skipTouch || !b.run || (!DEMO && !navigator.serial)) return null;
       return pickSerial(b).then(function (port) {
-        if (!port) { log('No running board picked; looking for one in DFU mode instead.'); return null; }
+        if (!port) { log('No running board picked; looking for one already in update mode.'); return null; }
         log('Restarting the board into its bootloader (' + b.touchBaud + '-baud touch)…');
         return FL.serial.touch(port, { baud: b.touchBaud }).then(function () {
           if (DEMO) setTimeout(function () { demoBoard.running = false; }, 700);
-          log('Waiting for the board to come back in DFU mode…');
+          log('Waiting for the board to come back in update mode…');
           return waitDfu(b, 6000);
         });
       });
@@ -388,11 +394,11 @@
   }
 
   // The DFU device picker. Called from the Flash click (which may no longer count as a click by
-  // the time we get here) or from "Choose the board in DFU mode" (a fresh one).
+  // the time we get here) or from "Pick DFU in FS Mode" (a fresh one).
   function askForDfu(c, first) {
     var b = c.board;
     if (DEMO) {
-      if (demoBoard.running) return stopWith(Object.assign(new Error('No board in DFU mode was found.'), { code: 'none' }), c);
+      if (demoBoard.running) return stopWith(Object.assign(new Error('No board in update mode was found.'), { code: 'none' }), c);
       return writeTo(demoDevice(), c);
     }
     return navigator.usb.requestDevice({ filters: [{ vendorId: b.dfu.vid, productId: b.dfu.pid }] }).then(function (dev) {
@@ -401,10 +407,10 @@
       if (e && e.name === 'SecurityError' && first) {
         // The browser wants a fresh click before it shows its list.
         S.run.busy = false; S.run.waitPick = true;
-        log('The board should be in DFU mode now. Click “Choose the board in DFU mode”.');
+        log('The board is in update mode now. Click “Pick ' + (b.dfu.name || 'DFU in FS Mode') + '”.');
         upd(); return;
       }
-      if (e && e.name === 'NotFoundError') e = Object.assign(new Error('No board in DFU mode was chosen.'), { code: 'none' });
+      if (e && e.name === 'NotFoundError') e = Object.assign(new Error('No board in update mode was chosen.'), { code: 'none' });
       throw e;
     }).catch(function (e) { stopWith(e, c); });
   }
@@ -457,11 +463,11 @@
     var win = /Windows/.test(navigator.userAgent), name = e && e.name, msg = (e && e.message) || String(e);
     run.errorTitle = 'The flash stopped'; run.errorHelp = '';
     if (e && e.code === 'none') {
-      run.errorTitle = 'No board in DFU mode';
+      run.errorTitle = 'No board in update mode';
       run.error = msg + (S.skipTouch && b.run
-        ? ' “Already in DFU mode” is ticked, so Flasher didn’t ask the board to restart. If it’s running firmware, untick that box and flash again.'
+        ? ' “The board isn’t running firmware” is ticked, so Flasher didn’t ask the board to restart. If it is running firmware, untick that box and flash again.'
         : ' If the board was running, its firmware may not answer the restart request (or it’s blank).');
-      run.errorHelp = '<details open><summary>Put it in DFU mode by hand</summary>' + manualHtml(b) + '</details>';
+      run.errorHelp = '<details open><summary>Put it in update mode by hand</summary>' + manualHtml(b) + '</details>';
     } else if (e && e.code === 'busy') {
       run.error = msg;
     } else if (name === 'SecurityError' || /access denied/i.test(msg)) {
@@ -470,7 +476,7 @@
       run.errorHelp = '<a href="#" data-act="driver">Windows driver help</a>';
     } else if (name === 'NetworkError' || name === 'NotFoundError' || /disconnected|lost/i.test(msg)) {
       run.errorTitle = 'The board disconnected';
-      run.error = msg + ' Check the cable, put the board in DFU mode by hand, and flash again. A half-written flash is fine: the bootloader is in ROM and can’t be erased.';
+      run.error = msg + ' Check the cable, put the board in update mode by hand, and flash again. A half-written flash is fine: update mode is built into the chip and can’t be erased.';
     } else {
       run.error = msg;
     }
@@ -758,7 +764,7 @@
   }
 
   function driverSheet() {
-    sheet('<div class="sheet-head"><h2>Windows driver help</h2><p>Chrome and Edge reach a USB device on Windows only when it uses Windows’ WinUSB driver. A board in DFU mode (“DFU in FS Mode”, USB 0483:DF11) needs it once per computer. The board’s serial port needs nothing.</p></div>' +
+    sheet('<div class="sheet-head"><h2>Windows driver help</h2><p>Chrome and Edge reach a USB device on Windows only when it uses Windows’ WinUSB driver. A board in update mode (the chip’s DFU bootloader, listed as “DFU in FS Mode”, USB 0483:DF11) needs it once per computer. The board’s serial port needs nothing.</p></div>' +
       '<div class="sheet-body fl-prose">' +
       '<h3>Try it first</h3><p>If STM32CubeProgrammer is installed (the Arduino IDE’s STM32 uploads use it), its “STM32 Bootloader” driver is probably there already, and that driver is WinUSB. Flash, and if the board shows up in the browser’s list, you’re done.</p>' +
       '<h3>If it never shows up</h3><p>Put the board in DFU mode, then install one of these:</p>' +
