@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Scripts only from this site; data only from GitHub's API (the private data repo). USB and serial
+     access go through the browser's own pickers, never without a click. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://api.github.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Flasher · Firmware flasher</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23004952'/%3E%3Crect x='9' y='9' width='14' height='14' rx='2.5' fill='none' stroke='%23fff' stroke-width='2'/%3E%3Cpath d='M17 11.5l-3.5 5h4L15 20.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/suite.css">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<div id="demo-banner" class="demo-banner" hidden></div>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <a class="brand-home" href="./" data-act="home" title="Flasher home">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M13.2 7l-3.7 5.5h5L10.8 17"/><path d="M8 1.5V4M16 1.5V4M8 20v2.5M16 20v2.5M1.5 8H4M1.5 16H4M20 8h2.5M20 16h2.5"/></svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Flasher</div>
+          <div class="brand-sub">Firmware flasher</div>
+        </div>
+      </a>
+      <button class="icon-btn side-collapse" data-act="nav" title="Hide sidebar ( [ )" aria-label="Hide sidebar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M7.5 3.5v13"/><path d="M13.5 8l-2 2 2 2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <nav class="side-list" id="fw-list" aria-label="Firmware"></nav>
+    <button type="button" class="side-link" data-act="open-file" title="Flash a .bin file from this computer">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg>
+      Open a .bin file…
+    </button>
+    <button type="button" class="side-link" data-act="driver" title="Set up Windows so the browser can reach a board in DFU mode">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4"/><circle cx="10" cy="14.4" r=".5" fill="currentColor"/></svg>
+      Windows driver help
+    </button>
+    <div class="side-tools">
+      <div class="side-head"><span class="side-label">Dovetail Signoff</span></div>
+      <a class="side-link" href="../fw_design_review/index.html" data-demo-href title="Open Signoff FW, the firmware design review">
+        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="11" height="11" rx="1.8"/><path d="M6.5 1.5v2M11.5 1.5v2M6.5 14.5v2M11.5 14.5v2"/><path d="M7.6 7.2L6 9l1.6 1.8M10.4 7.2L12 9l-1.6 1.8"/></svg></span>
+        <span>Signoff FW<small>Firmware design review</small></span>
+      </a>
+      <a class="side-link" href="../ee_design_review/index.html" data-demo-href title="Open Signoff EE, the electrical design review">
+        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><rect x="4.5" y="4.5" width="9" height="9" rx="1.5"/><path d="M7 1.5v3M11 1.5v3M7 13.5v3M11 13.5v3M1.5 7h3M1.5 11h3M13.5 7h3M13.5 11h3"/></svg></span>
+        <span>Signoff EE<small>Electrical design review</small></span>
+      </a>
+      <a class="side-link" href="../signoff/index.html" data-demo-href title="Back to Dovetail Signoff, all tools">
+        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="#fff"><rect x="2" y="2" width="6" height="6" rx="1.5"/><rect x="10" y="2" width="6" height="6" rx="1.5"/><rect x="2" y="10" width="6" height="6" rx="1.5"/><rect x="10" y="10" width="6" height="6" rx="1.5"/></svg></span>
+        <span>All tools<small>Dovetail Signoff home</small></span>
+      </a>
+    </div>
+    <div class="side-foot">
+      <button class="sync-pill" data-act="account" id="account-pill" title="GitHub sign-in">
+        <span class="sync-dot" id="account-dot"></span>
+        <span class="sync-text"><span class="sync-title" id="account-title">Not signed in</span><span class="sync-sub" id="account-sub">Sign in to list firmware</span></span>
+      </button>
+      <button class="icon-btn" data-act="theme" id="theme-btn" title="Dark mode" aria-label="Toggle dark mode"></button>
+    </div>
+  </aside>
+  <main class="main" id="main">
+    <header class="toolbar" id="toolbar">
+      <button class="icon-btn menu-toggle" data-act="nav" title="Show sidebar ( [ )" aria-label="Show sidebar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h14M3 10h14M3 14h14"/></svg>
+      </button>
+      <div class="toolbar-center"><span class="toolbar-title" id="toolbar-title"></span></div>
+      <div class="toolbar-actions"><span class="fl-version" id="version"></span></div>
+    </header>
+    <div id="view"></div>
+  </main>
+</div>
+<div id="sheet-root"></div>
+<div class="toasts" id="toasts"></div>
+<input type="file" id="file-input" accept=".bin,application/octet-stream" hidden>
+<script src="assets/version.js"></script>
+<script src="assets/vendor/model.js"></script>
+<script src="assets/vendor/github.js"></script>
+<script src="assets/dfuse.js"></script>
+<script src="assets/image.js"></script>
+<script src="assets/serial.js"></script>
+<script src="assets/fakeusb.js"></script>
+<script src="assets/catalog.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

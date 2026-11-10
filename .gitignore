@@ -1,0 +1,3 @@
+# Local publish settings (paths on this machine)
+tools/publish.local.json
+__pycache__/

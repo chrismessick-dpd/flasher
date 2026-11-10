@@ -1,0 +1,88 @@
+/* Flasher's own styles, on top of assets/suite.css (Signoff EE's, vendored). Use the suite's tokens;
+   severities never differ by hue alone (--issue-hatch stripes errors, --warn-hatch dots warnings). */
+
+.brand-home { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; min-width: 0; flex: 1; }
+.brand-mark svg { width: 26px; height: 26px; }
+.fl-version { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.side-group { margin-bottom: 6px; }
+.side-group .side-head { padding: 8px 8px 4px; }
+
+.fl-pad { padding: 18px 20px; margin-bottom: 22px; }
+.fl-muted { color: var(--text-3); font-size: 13px; margin: 0; }
+.fl-mono { font-family: var(--mono); font-size: 12px; }
+.fl-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.fl-center { justify-content: center; }
+.fl-grow { flex: 1; min-width: 160px; }
+.fl-foot { margin-top: 26px; }
+.section-title { margin: 26px 0 10px; }
+
+.hint.fl-bad { background: var(--issue-hatch), var(--issue-soft); color: var(--text); }
+.hint.fl-bad b { color: var(--issue); }
+.hint.fl-warn { background: var(--warn-hatch), var(--warn-soft); color: var(--text); }
+.hint.fl-warn b { color: var(--warn); }
+.hint.fl-good { background: var(--pass-soft); color: var(--text); }
+.hint.fl-good b { color: var(--pass); }
+.hint b::before { content: none; }
+.hint.fl-bad b::before { content: '✕ '; }
+.hint.fl-warn b::before { content: '▲ '; }
+.hint.fl-good b::before { content: '✓ '; }
+.fl-bad-text { color: var(--issue); }
+.fl-help { margin-top: 8px; }
+.fl-help a, .hint a, .note a, .guide a { color: var(--accent); }
+.chip.fl-chip-warn { background: var(--warn-hatch), var(--warn-soft); color: var(--text); }
+
+/* Home: firmware cards per board */
+.fl-board { margin-bottom: 8px; }
+.fl-board-head { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin: 26px 0 8px; }
+.fl-board-head .section-title { margin: 0 2px 0 0; }
+.fl-board-note { margin: 0 0 12px; }
+.fl-fw {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start; text-align: left;
+  border: none; padding: 16px 18px; font: inherit; color: inherit; cursor: pointer;
+  transition: transform 0.2s var(--ease), box-shadow 0.2s;
+}
+.fl-fw:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.fl-fw-name { font: 600 16px var(--display); letter-spacing: -0.01em; }
+.fl-fw-sum { color: var(--text-2); font-size: 13.5px; line-height: 1.45; flex: 1; }
+
+/* Firmware page */
+.fl-desc { white-space: pre-wrap; font-size: 14px; line-height: 1.55; color: var(--text-2); }
+.fl-steps { list-style: none; margin: 0 0 4px; padding: 0; }
+.fl-step { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--hair); }
+.fl-step:last-child { border-bottom: none; }
+.fl-step > div { flex: 1; min-width: 0; }
+.fl-num {
+  width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: var(--bg-sunk); color: var(--text-2); font: 600 13px var(--display); font-variant-numeric: tabular-nums;
+}
+.fl-step.now .fl-num { background: var(--accent); color: #fff; animation: pulse 1.2s infinite; }
+.fl-step.done .fl-num { background: var(--pass); color: transparent; position: relative; }
+.fl-step.done .fl-num::after { content: '✓'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 14px; }
+.fl-step.bad .fl-num { background: var(--issue-fill-hatch), var(--issue); color: transparent; position: relative; }
+.fl-step.bad .fl-num::after { content: '✕'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 13px; }
+.fl-step-title { font-weight: 600; font-size: 14.5px; }
+.fl-step-sub { color: var(--text-2); font-size: 13px; margin-top: 3px; line-height: 1.45; }
+.fl-bar { margin-top: 10px; height: 6px; border-radius: 3px; }
+.fl-phase { font-variant-numeric: tabular-nums; }
+.fl-check { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--text-2); margin-top: 8px; cursor: pointer; }
+.fl-check input { accent-color: var(--accent); width: 15px; height: 15px; }
+.fl-log { margin-top: 14px; font-size: 13px; color: var(--text-2); }
+.fl-log summary { cursor: pointer; }
+.fl-log .log { max-height: 220px; }
+.fl-manual { margin: 16px 0 0; }
+.fl-manual p { margin: 8px 0 0; }
+
+.fl-console {
+  margin: 0; font: 12.5px/1.5 var(--mono); background: var(--bg-sunk); border-radius: 10px; padding: 10px 12px;
+  height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+}
+.card form.fl-row { margin-top: 10px; }
+
+/* Help sheet prose */
+.fl-prose h3 { font: 600 14.5px var(--display); margin: 16px 0 4px; }
+.fl-prose h3:first-child { margin-top: 0; }
+.fl-prose p, .fl-prose li { font-size: 13.5px; line-height: 1.55; color: var(--text-2); }
+.fl-prose p { margin: 0 0 6px; }
+.fl-prose ul { padding-left: 20px; margin: 4px 0 6px; }
+.fl-prose .fl-mono { word-break: break-all; }
+.fl-prose .log { max-height: none; white-space: pre-wrap; word-break: break-all; }

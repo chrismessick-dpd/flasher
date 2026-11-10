@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flasher tests</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; }
+  .pass { color: #248a3d; } .fail { color: #d70015; font-weight: 600; }
+  pre { white-space: pre-wrap; margin: 2px 0 8px 18px; color: #515154; }
+</style>
+</head>
+<body>
+<h1>Flasher tests</h1>
+<p>Runs the DfuSe code against a simulated STM32 ROM bootloader (assets/fakeusb.js). The page title
+becomes PASS, FAIL, or ERROR.</p>
+<div id="out"></div>
+<script src="../assets/vendor/model.js"></script>
+<script src="../assets/vendor/github.js"></script>
+<script src="../assets/dfuse.js"></script>
+<script src="../assets/image.js"></script>
+<script src="../assets/serial.js"></script>
+<script src="../assets/fakeusb.js"></script>
+<script src="../assets/catalog.js"></script>
+<script src="test.js"></script>
+</body>
+</html>
