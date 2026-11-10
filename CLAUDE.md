@@ -44,6 +44,10 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   (`44cec31`), and `runAlso` on the Arduino board (shared repo `d1ee712`, `--board-only`). Not yet
   tried from the page.
   Then Chris flashed it from the hosted page (2026-11-10).
+- **Settings sheet like Signoff EE's (2026-11-10, Chris; not committed):** the account pill opens
+  Settings (`accountSheet`): Appearance, EE's four-step token guide, the token, Remember, a
+  read-only Repositories fold, a log, Test connection (`FL.access.load`), and Sign out (with a
+  confirm). The name field is kept but hidden and never written (Flasher signs nothing).
 - **Bridge boards (2026-11-10, Chris; not committed):** a board with no USB of its own, updated
   through a host board's passthrough from the page (README, *Bridge boards*; `assets/sboot.js`,
   simulated by `assets/fakebridge.js`). The client's display is the first: its board and image are
