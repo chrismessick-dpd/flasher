@@ -61,15 +61,54 @@
   }
 
   // ── Loading the catalog ──
+  // The list is kept in this browser after each sync (Chris, 2026-11-10), for the account it was read
+  // with (the engine's tokenTag): a visit shows it at once, then syncs, and the new list replaces it only
+  // once it's here. A sync that fails keeps the kept list and says so on the pill.
+  var KEEP_KEY = 'flasher.v1.catalog';
+  function tagOf(tok) { return tok && window.Signoff && Signoff.model && Signoff.model.tokenTag ? Signoff.model.tokenTag(tok) : ''; }
+  function readKept(tok) {
+    try {
+      var k = JSON.parse(localStorage.getItem(KEEP_KEY) || 'null');
+      return k && k.v === 1 && k.tag && k.tag === tagOf(tok) && k.loaded ? k : null;
+    } catch (e) { return null; }
+  }
+  function keep(tok, c) {
+    try { localStorage.setItem(KEEP_KEY, JSON.stringify({ v: 1, tag: tagOf(tok), at: Date.now(), loaded: FL.access.slim(c.access) })); } catch (e) { /* storage full or blocked: next visit reads GitHub first */ }
+  }
+  function forgetKept() { try { localStorage.removeItem(KEEP_KEY); } catch (e) { /* storage blocked */ } }
+
   function load() {
-    S.error = '';
+    S.error = ''; S.syncError = '';
     if (DEMO) { S.loading = true; render(); return C.loadDemo().then(done, fail); }
     var tok = C.auth.token();
-    if (!tok) { S.catalog = null; S.loading = false; render(); return Promise.resolve(); }
-    S.loading = true; render();
-    return C.loadRepo(tok).then(done, fail);
-    function done(c) { S.catalog = c; S.loading = false; restoreFromUrl(); if (current()) prepareBytes(); render(); }
-    function fail(e) { S.catalog = e.catalog || null; S.invites = e.invites || []; S.loading = false; S.error = e.message || String(e); render(); }
+    if (!tok) { S.catalog = null; S.loading = false; S.syncing = false; render(); return Promise.resolve(); }
+    // Another account (signed in here or in another tab) never sees the last one's list.
+    if (S.catalog && S.catalogTag !== tagOf(tok)) { S.catalog = null; S.syncedAt = 0; S.check = null; S.bytesReady = false; bytesFor = null; }
+    if (S.syncing) return S.syncing;
+    S.catalogTag = tagOf(tok);
+    if (!S.catalog) {
+      var kept = readKept(tok);
+      if (kept) {
+        try { S.catalog = C.fromKept(kept.loaded, tok); S.syncedAt = kept.at; restoreFromUrl(); if (current()) prepareBytes(); }
+        catch (e) { S.catalog = null; forgetKept(); }
+      }
+    }
+    S.loading = !S.catalog; render();
+    var mine = function () { return tagOf(C.auth.token()) === tagOf(tok); };   // still the same account when it answers
+    S.syncing = C.loadRepo(tok).then(function (c) { if (!mine()) return; keep(tok, c); S.syncedAt = Date.now(); done(c); }, function (e) { if (mine()) fail(e); })
+      .then(function () { S.syncing = null; render(); });
+    return S.syncing;
+    function done(c) {
+      S.catalog = c; S.loading = false; restoreFromUrl();
+      // A flash under way keeps the bytes it has; a list that changed under the open firmware fetches it again.
+      if (current() && !(S.run && S.run.busy) && !(S.bytesReady && bytesFor && bytesFor.key === runKey())) prepareBytes();
+      render();
+    }
+    function fail(e) {
+      if (S.catalog && !DEMO && e.code !== 'none' && e.code !== 'invited') { S.syncError = e.message || String(e); S.loading = false; render(); return; }
+      if (e.code === 'none' || e.code === 'invited') forgetKept();
+      S.catalog = e.catalog || null; S.invites = e.invites || []; S.loading = false; S.error = e.message || String(e); render();
+    }
   }
 
   // ?fw=<board>/<id> opens one firmware. Read once at start: renders while loading rewrite the address.
@@ -185,20 +224,29 @@
     set(true);
   }
 
-  function renderAccount() {
-    var dot = $('#account-dot'), t = $('#account-title'), s = $('#account-sub');
-    s.classList.remove('sync-who'); $('#account-pill').title = 'GitHub sign-in';
-    if (DEMO) { dot.dataset.tone = 'ok'; t.textContent = 'Demo'; s.textContent = 'Made-up firmware, simulated board'; return; }
-    var tok = C.auth.token();
-    if (!tok) { dot.dataset.tone = 'idle'; t.textContent = 'Not signed in'; s.textContent = 'Sign in to list firmware'; return; }
-    if (S.loading) { dot.dataset.tone = 'busy'; t.textContent = 'Signed in'; s.textContent = 'Loading firmware…'; return; }
-    if (S.error) { dot.dataset.tone = 'error'; t.textContent = 'Signed in'; s.textContent = 'Couldn’t read the firmware list'; return; }
-    // Line 1 is the state; line 2 the GitHub account this page acts as (Chris, 2026-11-10: as in the suite's sync pill).
-    dot.dataset.tone = 'ok'; t.textContent = S.catalog ? 'Signed in · ' + S.catalog.firmware.length + ' firmware' : 'Signed in';
-    if (S.catalog && S.catalog.login) { s.textContent = '@' + S.catalog.login; s.classList.add('sync-who'); }
-    else s.textContent = FL.config.repo;
-    $('#account-pill').title = 'GitHub sign-in' + (S.catalog ? ' · ' + (S.catalog.fte ? 'FTE: every project' : 'the projects shared with you') : '');
+  // The sync pill, as in Signoff EE: line 1 is the state and when it last synced, line 2 the GitHub ID.
+  // A click syncs (signs in when signed out); the gear beside it opens Settings.
+  function relTime(t) {
+    var m = Math.round((Date.now() - t) / 60000);
+    return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
   }
+  function renderAccount() {
+    var dot = $('#account-dot'), t = $('#account-title'), s = $('#account-sub'), pill = $('#account-pill');
+    s.classList.remove('sync-who');
+    var who = S.catalog && S.catalog.login ? '@' + S.catalog.login : '';
+    function line2(fallback) { s.textContent = who || fallback; if (who) s.classList.add('sync-who'); }
+    pill.classList.toggle('is-syncing', !!S.syncing);
+    if (DEMO) { dot.dataset.tone = 'ok'; t.textContent = 'Demo'; s.textContent = 'Made-up firmware, simulated board'; pill.title = 'Demo mode'; return; }
+    var tok = C.auth.token();
+    if (!tok) { dot.dataset.tone = 'idle'; t.textContent = 'Not signed in'; s.textContent = 'Click to sign in'; pill.title = 'Sign in to GitHub to list firmware'; return; }
+    pill.title = 'Sync the firmware list with GitHub' + (S.catalog ? ' · ' + S.catalog.firmware.length + ' firmware, ' + (S.catalog.fte ? 'FTE: every project' : 'the projects shared with you') : '');
+    if (S.syncing) { dot.dataset.tone = 'busy'; t.textContent = 'Syncing…'; line2(FL.config.repo); return; }
+    if (S.error || S.syncError) { dot.dataset.tone = 'error'; t.textContent = 'Sync failed'; s.textContent = 'Click to try again'; pill.title = S.error || S.syncError; return; }
+    dot.dataset.tone = S.syncedAt ? 'ok' : 'idle';
+    t.textContent = S.syncedAt ? 'Synced ' + relTime(S.syncedAt) : 'Not synced yet';
+    line2('Click to sync');
+  }
+  setInterval(function () { if (!S.syncing) renderAccount(); }, 60000);
 
   var ICON = {
     chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M13.2 7l-3.7 5.5h5L10.8 17"/><path d="M8 1.5V4M16 1.5V4M8 20v2.5M16 20v2.5M1.5 8H4M1.5 16H4M20 8h2.5M20 16h2.5"/></svg>',
@@ -1177,6 +1225,7 @@
         if (S.tab === 'console' && S.con && S.con.open) focusTerm();
         break;
       case 'account': accountSheet(); break;
+      case 'sync': if (!DEMO && C.auth.token()) load(); else accountSheet(); break;
       case 'driver': driverSheet(); break;
       case 'sheet-bg': case 'sheet-close': closeSheet(); break;
       case 'test-conn': testConnection(); break;
@@ -1184,7 +1233,7 @@
       case 'sign-out':
         if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too.')) break;
         (window.SignoffAuth ? window.SignoffAuth.signOut() : Promise.resolve()).catch(function () { /* cleared below */ }).then(function () {
-          C.auth.clear(); closeSheet(); S.catalog = null; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
+          C.auth.clear(); forgetKept(); closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
         });
         break;
       case 'gh-signin': ghSignIn(el); break;

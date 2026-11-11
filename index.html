@@ -51,17 +51,9 @@
         <span class="tool-mark tool-mark-text">FW</span>
         <span>Signoff FW<small>Firmware design review</small></span>
       </a>
-      <a class="side-link" href="../pcb_dfm/index.html" data-demo-href title="Open Fabcheck, the fab package DFM checker">
-        <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8"><rect x="1.5" y="1.5" width="15" height="15" rx="2.5"/><circle cx="6" cy="6" r="1.4" fill="#fff" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="#fff" stroke="none"/></svg></span>
-        <span>Fabcheck<small>Fab package DFM</small></span>
-      </a>
       <a class="side-link" href="../signoff_pl/index.html" data-demo-href data-internal hidden title="Open Signoff PL, the product-level project view">
         <span class="tool-mark"><svg viewBox="0 0 18 18" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="1.8" width="5" height="4" rx="1"/><rect x="1.8" y="12.2" width="5" height="4" rx="1"/><rect x="11.2" y="12.2" width="5" height="4" rx="1"/><path d="M9 5.8v3.2M4.3 12.2V9h9.4v3.2"/></svg></span>
         <span>Signoff PL<small>Project lead</small></span>
-      </a>
-      <a class="side-link" href="../loom/index.html" data-demo-href title="Open Loom, harness drawings">
-        <span class="tool-mark"><svg viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"><path d="M2.5 6.5h3.5c3 0 3 7 6 7h5.5M2.5 13.5h3.5c3 0 3-7 6-7h5.5"/></svg></span>
-        <span>Loom<small>Harness drawings</small></span>
       </a>
       <a class="side-link" href="../signoff/index.html" data-demo-href title="Back to Dovetail Signoff, all tools">
         <span class="tool-mark"><svg viewBox="0 0 18 18" fill="#fff"><rect x="2" y="2" width="6" height="6" rx="1.5"/><rect x="10" y="2" width="6" height="6" rx="1.5"/><rect x="2" y="10" width="6" height="6" rx="1.5"/><rect x="10" y="10" width="6" height="6" rx="1.5"/></svg></span>
@@ -77,11 +69,14 @@
       Windows driver help
     </button>
     <div class="side-foot">
-      <button class="sync-pill" data-act="account" id="account-pill" title="GitHub sign-in">
+      <button class="sync-pill" data-act="sync" id="account-pill" title="Sync the firmware list with GitHub">
         <span class="sync-dot" id="account-dot"></span>
         <span class="sync-text"><span class="sync-title" id="account-title">Not signed in</span><span class="sync-sub" id="account-sub">Sign in to list firmware</span></span>
       </button>
       <button class="icon-btn" data-act="theme" id="theme-btn" title="Dark mode" aria-label="Toggle dark mode"></button>
+      <button class="icon-btn" data-act="account" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
     </div>
   </aside>
   <main class="main" id="main">

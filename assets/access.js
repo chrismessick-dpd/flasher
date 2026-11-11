@@ -253,6 +253,19 @@
     }).then(function (failed) { return { repo: dstFull, roster: roster, failed: failed }; });
   }
 
+  /* What load() found, without its GitHubStore objects, so the page can keep it in the browser between
+     visits (Chris, 2026-11-10: show the projects at once and update them by syncing); revive() puts the
+     stores back for a token. */
+  function slim(loaded) {
+    return { fte: loaded.fte, login: loaded.login, roster: loaded.roster, invites: loaded.invites, errors: loaded.errors,
+      repos: loaded.repos.map(function (r) { return { full: r.full, raw: r.raw, entries: r.entries, head: r.head, roster: r.roster }; }) };
+  }
+  function revive(kept, ctx) {
+    var out = copy(kept);
+    out.repos.forEach(function (r) { r.store = store(r.full, ctx); });
+    return out;
+  }
+
   FL.access = { PREFIX: PREFIX, full: full, dataFull: dataFull, dump: dump, filesOf: filesOf, projectOf: projectOf, projectsIn: projectsIn, split: split,
-    readRepo: readRepo, load: load, combine: combine, saveRoster: saveRoster, invite: invite, revoke: revoke, accessMap: accessMap, share: share };
+    readRepo: readRepo, load: load, combine: combine, slim: slim, revive: revive, saveRoster: saveRoster, invite: invite, revoke: revoke, accessMap: accessMap, share: share };
 })(window.FL = window.FL || {});

@@ -31,12 +31,19 @@
   /* Everything this token may flash (assets/access.js): an FTE's flasher_data plus every shared
      project repo, or only the review-flasher-* repos shared with a client or contractor.
      Resolves the combined catalog, with fte, login, roster, and access (what was loaded). */
+  function fromLoaded(loaded) {
+    var c = FL.access.combine(loaded);
+    c.fte = loaded.fte; c.login = loaded.login; c.roster = loaded.roster; c.access = loaded; c.invites = loaded.invites;
+    loaded.errors.forEach(function (e) { c.problems.push(e); });
+    return c;
+  }
+  /* The catalog this browser kept from its last sync (FL.access.slim), ready to flash from with this token. */
+  function fromKept(kept, token, fetchImpl) { return fromLoaded(FL.access.revive(kept, { token: token, fetch: fetchImpl })); }
+
   function loadRepo(token, fetchImpl) {
     var cfg = FL.config, A = FL.access;
     return A.load({ token: token, fetch: fetchImpl }).then(function (loaded) {
-      var c = A.combine(loaded);
-      c.fte = loaded.fte; c.login = loaded.login; c.roster = loaded.roster; c.access = loaded; c.invites = loaded.invites;
-      loaded.errors.forEach(function (e) { c.problems.push(e); });
+      var c = fromLoaded(loaded);
       if (!loaded.fte && !loaded.repos.length) {
         var e0 = new Error(loaded.invites.length
           ? 'You’ve been invited to firmware on GitHub. Accept the invitation to see it.'
@@ -197,5 +204,5 @@
     });
   }
 
-  FL.catalog = { auth: auth, loadRepo: loadRepo, loadDemo: loadDemo, makeImage: makeImage, partsOf: partsOf, DEMO_MANIFEST: DEMO_MANIFEST };
+  FL.catalog = { auth: auth, loadRepo: loadRepo, fromKept: fromKept, loadDemo: loadDemo, makeImage: makeImage, partsOf: partsOf, DEMO_MANIFEST: DEMO_MANIFEST };
 })(window.FL = window.FL || {});
