@@ -1072,12 +1072,14 @@
       '<div class="field"><span class="field-label">Appearance</span><div class="seg full" id="s-theme">' + [['auto', 'Automatic'], ['light', 'Light'], ['dark', 'Dark']].map(function (t) {
         return '<button type="button" class="' + (theme0 === t[0] ? 'on' : '') + '" data-theme="' + t[0] + '">' + t[1] + '</button>';
       }).join('') + '</div></div>' +
-      '<div class="field-label" style="margin-top:20px;font-size:13px;color:var(--text);font-weight:600">GitHub</div>' +
+      '<div class="field-label" style="margin-top:20px;font-size:13px;color:var(--text);font-weight:600">Signoff Repository Access</div>' +
       (tok && c && c.login ? '<p class="note" style="margin:0 0 12px">Signed in ' + (viaSignIn ? 'with GitHub ' : '') + 'as <b>' + esc(c.login) + '</b> · ' +
         (c.fte ? 'FTE: you see all firmware' : 'Client or contractor: you see the projects shared with you') + '</p>' : '') +
-      (viaSignIn ? '' : auth ? '<button type="button" class="btn btn-primary" data-act="gh-signin" style="margin:4px 0 6px">Sign in with GitHub</button>' +
+      // The token is the second way in: a gray button beside Sign in that drops its panel down.
+      (viaSignIn ? '' : auth ? '<div class="signin-row"><button type="button" class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button>' +
+        '<button type="button" class="btn token-toggle" data-act="token-toggle" aria-expanded="' + !!tok + '" aria-controls="s-token-panel">Use a token instead</button></div>' +
         '<p class="note" style="margin:0 0 12px">Uses your GitHub login, with its two-factor step. No token to create or keep track of.</p>' +
-        '<details class="guide"' + (tok ? ' open' : '') + '><summary>Use a token instead</summary><div style="margin-top:10px">' + tokenFields() + '</div></details>' : tokenFields()) +
+        '<div class="token-panel" id="s-token-panel"' + (tok ? '' : ' hidden') + '>' + tokenFields() + '</div>' : tokenFields()) +
       '<details class="guide" style="margin-top:14px"><summary>Repositories</summary>' +
       '<div class="row2" style="margin-top:10px"><div class="field"><label>Account or organization</label><input class="input" value="' + esc(cfg.owner) + '" readonly></div>' +
       '<div class="field"><label>Branch</label><input class="input" value="' + esc(cfg.branch) + '" readonly></div></div>' +
@@ -1186,6 +1188,13 @@
         });
         break;
       case 'gh-signin': ghSignIn(el); break;
+      case 'token-toggle': {
+        var panel = $('#s-token-panel'); if (!panel) break;
+        var opening = panel.hidden;
+        panel.hidden = !opening; el.setAttribute('aria-expanded', String(opening));
+        var tf = opening && panel.querySelector('#tok'); if (tf && !tf.value) tf.focus();
+        break;
+      }
       case 'reload': load(); break;
       case 'toggle-group': toggleGroup(el.dataset.group); break;
       case 'people': select('people'); loadAccess(); break;

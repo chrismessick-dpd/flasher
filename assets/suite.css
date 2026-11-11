@@ -566,7 +566,9 @@ html.embed #page > .page { padding-top: 22px; }
    clickable-looking but does nothing (sync() ignores a second start). */
 .btn.is-syncing { animation: sync-breathe 2.4s ease-in-out infinite; cursor: progress; }
 .btn.is-syncing:not(.btn-primary) { color: var(--accent-ink); }
-.btn.is-syncing svg { animation: busy-spin 1.2s linear infinite; }
+.btn.is-syncing svg { animation: sync-spin 1.2s linear infinite; }
+/* The sync icon's arrows point counterclockwise, so it turns that way. */
+@keyframes sync-spin { to { transform: rotate(-360deg); } }
 @keyframes sync-breathe { 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
 @media (prefers-reduced-motion: reduce) {
   .btn.is-syncing, .btn.is-syncing svg { animation: none; }
@@ -716,6 +718,20 @@ html.embed #page > .page { padding-top: 22px; }
 .guide summary { cursor: pointer; font-weight: 500; color: var(--text); }
 .guide ol { margin: 8px 0 2px; padding-left: 20px; line-height: 1.6; }
 .guide a { color: var(--accent); }
+/* Settings' way in: Sign in with GitHub, and beside it a gray Use a token instead that drops the
+   token panel down under them. */
+.signin-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 6px; }
+.token-toggle::after {
+  content: ''; width: 6px; height: 6px; margin: -3px 1px 0 2px; flex: none;
+  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  transform: rotate(45deg); transition: transform 0.15s, margin 0.15s;
+}
+.token-toggle[aria-expanded="true"] { background: var(--hair-2); }
+.token-toggle[aria-expanded="true"]::after { transform: rotate(225deg); margin-top: 3px; }
+.token-panel { background: var(--bg-sunk); border-radius: 10px; padding: 12px 13px 4px; margin-bottom: 14px; }
+.token-panel[hidden] { display: none; }
+.token-panel .guide { background: var(--bg); }
+@media (prefers-reduced-motion: reduce) { .token-toggle::after { transition: none; } }
 
 /* ── Dovetail tools switcher (shared with Fabcheck through its vendored suite.css) ── */
 .side-tools { padding: 4px 0 6px; }
