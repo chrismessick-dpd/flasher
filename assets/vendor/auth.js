@@ -27,8 +27,11 @@
 
   // One GitHub App and Worker per site. Each Worker's origin must be in the page's CSP connect-src.
   // A site not listed here keeps pasting tokens.
+  // Production: the Dovetail Signoff app, for the hosted pages. Dev: Dovetail Signoff App, localhost only.
+  var PROD = { clientId: 'Iv23li2MtbpspvneopRN', worker: 'https://signoff-auth.misty-dawn-b371.workers.dev' };
   var DEV = { clientId: 'Iv23liRCoaHFv0aMl16i', worker: 'https://signoff-auth-dev.misty-dawn-b371.workers.dev' };
   var APPS = {
+    'https://chrismessick-dpd.github.io': PROD,
     'http://localhost:8774': DEV,
     'http://localhost:8771': DEV,
   };
