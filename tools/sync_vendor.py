@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DST = ROOT / "assets" / "vendor"
 EE = ROOT.parent / "ee_design_review" / "assets"
 HEADER = "/* Vendored from ee_design_review/assets/{name} (the Signoff engine). Do not edit here: re-copy with tools/sync_vendor.py. */\n"
-FILES = ["model.js", "github.js"]
+FILES = ["model.js", "github.js", "auth.js"]
 
 stale = []
 for name in FILES:

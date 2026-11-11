@@ -222,7 +222,8 @@
     if (!DEMO && !C.auth.token()) {
       return h + '<div class="card empty"><div class="empty-art">' + ICON.key + '</div><h2>Sign in to list firmware</h2>' +
         '<p>The firmware lives in a private GitHub repository. Sign in with the GitHub access you use for Signoff; if you’re signed in to Signoff EE in this browser, you’re already set.</p>' +
-        '<div class="fl-row fl-center"><button class="btn btn-primary" data-act="account">Sign in…</button><button class="btn" data-act="open-file">Open a .bin file…</button></div>' +
+        '<div class="fl-row fl-center">' + (ghAuth() ? '<button class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button><button class="btn" data-act="account">Use a token…</button>'
+          : '<button class="btn btn-primary" data-act="account">Sign in…</button>') + '<button class="btn" data-act="open-file">Open a .bin file…</button></div>' +
         '<p class="note">Just looking? <a href="?demo">Try the demo</a>, which flashes a simulated board.</p></div></div>';
     }
     if (S.error) {
@@ -1032,6 +1033,20 @@
     root.innerHTML = '';
   }
 
+  // Sign in with GitHub (the engine's auth.js), where this site has a GitHub App; null where it hasn't.
+  function ghAuth() {
+    var A = !DEMO && window.SignoffAuth;
+    if (!A) return null;
+    var st = A.status();
+    return st.available || st.signedIn ? st : null;
+  }
+  function ghSignIn(btn) {
+    if (btn) btn.disabled = true;
+    window.SignoffAuth.signIn(location.href).catch(function (e) { if (btn) btn.disabled = false; toast(e.message); });
+  }
+  // The GitHub tag of whoever is signed in: a sign-in's refresh replaces the token, not the person.
+  function whoTag() { var t = C.auth.token(); return t && window.Signoff && window.Signoff.model ? window.Signoff.model.tokenTag(t) : t ? 'x' : ''; }
+
   function accountSheet() {
     if (DEMO) return sheet('<div class="sheet-head"><h2>Demo</h2><p>The demo needs no sign-in. Its firmware is made up and flashes a board simulated in this page.</p></div><div class="sheet-foot"><a class="btn" href="./">Leave the demo</a><button class="btn btn-primary" data-act="sheet-close">Done</button></div>');
     // Laid out like Signoff EE's Settings (Chris, 2026-11-10). The name field is kept but hidden:
@@ -1040,6 +1055,17 @@
     try { remembered = !!localStorage.getItem('signoff.token'); } catch (e) { /* storage blocked */ }
     try { user = (JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {}).user || ''; } catch (e) { /* unreadable */ }
     var theme0 = readTheme(), c = S.catalog, cfg = FL.config;
+    var auth = ghAuth(), viaSignIn = !!(auth && auth.signedIn);
+    function tokenFields() {
+      return '<details class="guide"' + (tok || auth ? '' : ' open') + '><summary>New to GitHub? Set up in four steps</summary><ol>' +
+      '<li>Create a free account at <a href="https://github.com/signup" target="_blank" rel="noopener">github.com/signup</a>.</li>' +
+      '<li>Send your username to your Dovetail contact.</li>' +
+      '<li><a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Dovetail%20Signoff" target="_blank" rel="noopener">Create a token</a> (the link fills in the settings; pick an expiry and click <i>Generate token</i>).</li>' +
+      '<li>Paste the token below and click <b>Save &amp; sync</b>. Flasher shows any invitations waiting for you, with an Accept button.</li></ol></details>' +
+      '<div class="field"><label for="tok">Access token</label><input class="input" id="tok" type="password" value="' + esc(tok) + '" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">' +
+      '<p class="note">Kept in this browser and sent only to api.github.com. It’s the token every Signoff tool here shares, so signing in to Signoff EE signs you in here too. Collaborators use a classic token with the <b>repo</b> scope. The account owner can use a fine-grained token with <b>All repositories</b> and <b>Contents</b> and <b>Administration</b> set to read and write; sharing a project creates a new repository, which a token limited to selected repositories can’t reach.</p></div>' +
+      '<label class="check"><input type="checkbox" id="tok-remember"' + (remembered || !tok ? ' checked' : '') + '> Remember the token after closing the browser (avoid on shared computers)</label>';
+    }
     sheet('<form data-submit="sign-in"><div class="sheet-head"><h2>Settings</h2><p>Firmware comes from private GitHub repositories, so everyone flashes the same published images.</p></div>' +
       '<div class="sheet-body">' +
       '<div class="field" hidden><label for="s-user">Your name</label><input class="input" id="s-user" value="' + esc(user) + '" placeholder="First Last" readonly></div>' +
@@ -1047,16 +1073,11 @@
         return '<button type="button" class="' + (theme0 === t[0] ? 'on' : '') + '" data-theme="' + t[0] + '">' + t[1] + '</button>';
       }).join('') + '</div></div>' +
       '<div class="field-label" style="margin-top:20px;font-size:13px;color:var(--text);font-weight:600">GitHub</div>' +
-      (tok && c && c.login ? '<p class="note" style="margin:0 0 12px">Signed in as <b>' + esc(c.login) + '</b> · ' +
+      (tok && c && c.login ? '<p class="note" style="margin:0 0 12px">Signed in ' + (viaSignIn ? 'with GitHub ' : '') + 'as <b>' + esc(c.login) + '</b> · ' +
         (c.fte ? 'FTE: you see all firmware' : 'Client or contractor: you see the projects shared with you') + '</p>' : '') +
-      '<details class="guide"' + (tok ? '' : ' open') + '><summary>New to GitHub? Set up in four steps</summary><ol>' +
-      '<li>Create a free account at <a href="https://github.com/signup" target="_blank" rel="noopener">github.com/signup</a>.</li>' +
-      '<li>Send your username to your Dovetail contact.</li>' +
-      '<li><a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Dovetail%20Signoff" target="_blank" rel="noopener">Create a token</a> (the link fills in the settings; pick an expiry and click <i>Generate token</i>).</li>' +
-      '<li>Paste the token below and click <b>Save &amp; sync</b>. Flasher shows any invitations waiting for you, with an Accept button.</li></ol></details>' +
-      '<div class="field"><label for="tok">Access token</label><input class="input" id="tok" type="password" value="' + esc(tok) + '" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false">' +
-      '<p class="note">Kept in this browser and sent only to api.github.com. It’s the token every Signoff tool here shares, so signing in to Signoff EE signs you in here too. Collaborators use a classic token with the <b>repo</b> scope. The account owner can use a fine-grained token with <b>All repositories</b> and <b>Contents</b> and <b>Administration</b> set to read and write; sharing a project creates a new repository, which a token limited to selected repositories can’t reach.</p></div>' +
-      '<label class="check"><input type="checkbox" id="tok-remember"' + (remembered || !tok ? ' checked' : '') + '> Remember the token after closing the browser (avoid on shared computers)</label>' +
+      (viaSignIn ? '' : auth ? '<button type="button" class="btn btn-primary" data-act="gh-signin" style="margin:4px 0 6px">Sign in with GitHub</button>' +
+        '<p class="note" style="margin:0 0 12px">Uses your GitHub login, with its two-factor step. No token to create or keep track of.</p>' +
+        '<details class="guide"' + (tok ? ' open' : '') + '><summary>Use a token instead</summary><div style="margin-top:10px">' + tokenFields() + '</div></details>' : tokenFields()) +
       '<details class="guide" style="margin-top:14px"><summary>Repositories</summary>' +
       '<div class="row2" style="margin-top:10px"><div class="field"><label>Account or organization</label><input class="input" value="' + esc(cfg.owner) + '" readonly></div>' +
       '<div class="field"><label>Branch</label><input class="input" value="' + esc(cfg.branch) + '" readonly></div></div>' +
@@ -1064,7 +1085,7 @@
       '<div class="field"><label>Shared projects start with</label><input class="input" value="review-flasher-" readonly></div></div>' +
       '<p class="note">Flasher’s repositories are fixed in assets/catalog.js.</p></details>' +
       '<div class="log" id="s-log" hidden></div>' +
-      '</div><div class="sheet-foot"><button class="btn" type="button" data-act="test-conn">Test connection</button>' + (tok ? '<button class="btn" type="button" data-act="sign-out" title="Remove the GitHub token every Signoff tool in this browser shares">Sign out</button>' : '') + '<span class="spacer"></span>' +
+      '</div><div class="sheet-foot"><button class="btn" type="button" data-act="test-conn">Test connection</button>' + (tok ? '<button class="btn" type="button" data-act="sign-out" title="' + (viaSignIn ? 'Sign out of GitHub in every Signoff tool in this browser' : 'Remove the GitHub token every Signoff tool in this browser shares') + '">Sign out</button>' : '') + '<span class="spacer"></span>' +
       '<button class="btn" type="button" data-act="settings-cancel">Cancel</button><button class="btn btn-primary" type="submit">Save &amp; sync</button></div></form>');
     var w = $('#sheet-root');
     w.dataset.theme0 = theme0;
@@ -1081,7 +1102,7 @@
     l.hidden = false; l.innerHTML += '<div class="' + (cls || '') + '">' + esc(text) + '</div>'; l.scrollTop = 1e6;
   }
   function testConnection() {
-    var tok = $('#tok').value.replace(/\s+/g, '');
+    var field = $('#tok'), tok = field ? field.value.replace(/\s+/g, '') : C.auth.token();
     if (!tok) { settingsLog('Paste a token first.', 'err'); return; }
     settingsLog('Checking your token…');
     FL.access.load({ token: tok }).then(function (r) {
@@ -1160,7 +1181,11 @@
       case 'settings-cancel': closeSheet(); break;
       case 'sign-out':
         if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too.')) break;
-        C.auth.clear(); closeSheet(); S.catalog = null; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out'); break;
+        (window.SignoffAuth ? window.SignoffAuth.signOut() : Promise.resolve()).catch(function () { /* cleared below */ }).then(function () {
+          C.auth.clear(); closeSheet(); S.catalog = null; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
+        });
+        break;
+      case 'gh-signin': ghSignIn(el); break;
       case 'reload': load(); break;
       case 'toggle-group': toggleGroup(el.dataset.group); break;
       case 'people': select('people'); loadAccess(); break;
@@ -1197,8 +1222,10 @@
     var k = ev.target.dataset.submit; if (!k) return;
     ev.preventDefault();
     if (k === 'sign-in') {
-      var root = $('#sheet-root'), t = $('#tok').value.trim(), was = C.auth.token();
+      var root = $('#sheet-root'), field = $('#tok'), was = C.auth.token();
       if (root.dataset.theme) writeTheme(root.dataset.theme);
+      if (!field) { closeSheet(); load(); return; }
+      var t = field.value.trim();
       if (!t) { if (was) { $('#tok').focus(); toast('Paste a token, or use Sign out'); } else closeSheet(); return; }
       C.auth.set(t, $('#tok-remember').checked); closeSheet(); load();
     }
@@ -1264,7 +1291,12 @@
   // Never leave mid-flash: the board would be left half-written (recoverable, but slow).
   window.addEventListener('beforeunload', function (ev) { if (S.run && S.run.busy) { ev.preventDefault(); ev.returnValue = ''; } });
   // Another tab signing in or out (Signoff EE, say) changes what this page can read.
-  window.addEventListener('storage', function (ev) { if (ev.key === 'signoff.token' && !DEMO && !(S.run && S.run.busy)) load(); });
+  var seenTag = whoTag();
+  window.addEventListener('storage', function (ev) {
+    if ((ev.key !== 'signoff.token' && ev.key !== 'signoff.login') || DEMO || (S.run && S.run.busy)) return;
+    var tag = whoTag();
+    if (tag !== seenTag) { seenTag = tag; load(); }
+  });
 
   // ── Start ──
   applyTheme(readTheme());

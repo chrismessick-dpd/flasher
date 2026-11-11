@@ -29,9 +29,21 @@
 
   // A short fingerprint of a GitHub token (FNV-1a), so a tool notices when the token it shares
   // with the other Signoff tools has changed. It can't be turned back into the token.
+  // A token from Sign in with GitHub (ghu_…, while signed in) is replaced every 8 hours, so it's
+  // fingerprinted by the signed-in login instead: a refresh is the same person, another account
+  // isn't. The hub's copy in signoff/assets/hub.js must stay identical.
+  function signedInLogin(token) {
+    if (!/^ghu_/.test(token)) return '';
+    try {
+      if (typeof localStorage === 'undefined' || !localStorage.getItem('signoff.auth')) return '';
+      return String(localStorage.getItem('signoff.login') || '');
+    } catch (e) { return ''; }
+  }
   function tokenTag(token) {
     var h = 0x811c9dc5;
     token = String(token || '');
+    var login = signedInLogin(token);
+    if (login) token = 'signin:' + login.toLowerCase();
     for (var i = 0; i < token.length; i++) { h ^= token.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return ('0000000' + h.toString(16)).slice(-8);
   }

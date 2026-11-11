@@ -62,12 +62,31 @@
     });
   }
 
+  // Sign in with GitHub (auth.js): a token from a sign-in lasts 8 hours, so a store made earlier may
+  // hold one that has since been replaced. Calls made with a sign-in's token use the current one,
+  // refreshed first when it's due, and a 401 refreshes once and retries (GitHub refuses a 401 before
+  // doing anything, so a retried write is safe). A pasted token, or no window, is used as it is.
+  function signInFor(token) {
+    var A = typeof window !== 'undefined' && window.SignoffAuth;
+    return A && token && A.owns(token) ? A : null;
+  }
+
   function apiCall(fetchImpl, token, url, opts) {
     opts = opts || {};
-    var headers = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-    if (token) headers.Authorization = 'Bearer ' + token;
-    if (opts.body) headers['Content-Type'] = 'application/json';
-    return fetchImpl(url, { method: opts.method || 'GET', headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined, cache: 'no-store' })
+    var A = signInFor(token);
+    function send(tok) {
+      var headers = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+      if (tok) headers.Authorization = 'Bearer ' + tok;
+      if (opts.body) headers['Content-Type'] = 'application/json';
+      return fetchImpl(url, { method: opts.method || 'GET', headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined, cache: 'no-store' });
+    }
+    var used;
+    var first = A ? A.token().then(function (t) { used = t || token; return send(used); }) : send(token);
+    return first
+      .then(function (res) {
+        if (!A || res.status !== 401) return res;
+        return A.refresh(used).then(function (t) { return t ? send(t) : res; });
+      })
       .then(function (res) {
         return res.text().then(function (text) {
           var data = null;
