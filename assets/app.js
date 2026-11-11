@@ -187,12 +187,17 @@
 
   function renderAccount() {
     var dot = $('#account-dot'), t = $('#account-title'), s = $('#account-sub');
+    s.classList.remove('sync-who'); $('#account-pill').title = 'GitHub sign-in';
     if (DEMO) { dot.dataset.tone = 'ok'; t.textContent = 'Demo'; s.textContent = 'Made-up firmware, simulated board'; return; }
     var tok = C.auth.token();
     if (!tok) { dot.dataset.tone = 'idle'; t.textContent = 'Not signed in'; s.textContent = 'Sign in to list firmware'; return; }
     if (S.loading) { dot.dataset.tone = 'busy'; t.textContent = 'Signed in'; s.textContent = 'Loading firmware…'; return; }
     if (S.error) { dot.dataset.tone = 'error'; t.textContent = 'Signed in'; s.textContent = 'Couldn’t read the firmware list'; return; }
-    dot.dataset.tone = 'ok'; t.textContent = 'Signed in'; s.textContent = S.catalog ? S.catalog.firmware.length + ' firmware · ' + FL.config.repo : FL.config.repo;
+    // Line 1 is the state; line 2 the GitHub account this page acts as (Chris, 2026-11-10: as in the suite's sync pill).
+    dot.dataset.tone = 'ok'; t.textContent = S.catalog ? 'Signed in · ' + S.catalog.firmware.length + ' firmware' : 'Signed in';
+    if (S.catalog && S.catalog.login) { s.textContent = '@' + S.catalog.login; s.classList.add('sync-who'); }
+    else s.textContent = FL.config.repo;
+    $('#account-pill').title = 'GitHub sign-in' + (S.catalog ? ' · ' + (S.catalog.fte ? 'FTE: every project' : 'the projects shared with you') : '');
   }
 
   var ICON = {

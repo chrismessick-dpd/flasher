@@ -205,6 +205,8 @@ body.has-banner .app { flex: 1; min-height: 0; height: auto; }
 .sync-text { min-width: 0; line-height: 1.25; display: flex; flex-direction: column; }
 .sync-title { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sync-sub { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The signed-in GitHub account, on the pill's second line: who this page is acting as, at a glance. */
+.sync-sub.sync-who { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
 
 /* ── Buttons ── */
 .btn {

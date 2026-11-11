@@ -18,7 +18,12 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   against `tests/fakegithub.js` and in the page with a fake GitHub; the client project was shared
   under its board id, so the firmware repo's `flasher.json` uses that as its project id (another id
   would publish a second copy into `flasher_data`). Republished in place 2026-11-10 with the
-  project name in the manifest.
+  project name in the manifest. Then (Chris) the project and its repo were renamed to a generic
+  name: GitHub's rename keeps collaborators, the manifest's `projects` key and board `project` change, and
+  `users.json` tombstones the old `shared` id (`deleted`, which `model.sharedRepo` honors) beside the new
+  one. `flasher.json` must name the new id, or `publish.py` puts a second copy in `flasher_data`.
+- **Account pill (2026-11-10, Chris):** "Signed in · N firmware" over the GitHub ID (`.sync-who`, from
+  EE's styles), as the suite's sync pill now shows the ID on its second line.
 - **Bootloader hang (2026-11-10):** about 1 restart in 20 left the client board in the ROM
   bootloader with USB up but never enumerated (the host missed the reset's brief disconnect). Fixed
   in that board's package (it drops off USB for 250 ms before resetting; see the firmware repo's
