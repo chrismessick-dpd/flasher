@@ -100,6 +100,7 @@
     return S.syncing;
     function done(c) {
       S.catalog = c; S.loading = false; restoreFromUrl();
+      if (window.SignoffInvites && !DEMO) window.SignoffInvites.refresh();
       // A flash under way keeps the bytes it has; a list that changed under the open firmware fetches it again.
       if (current() && !(S.run && S.run.busy) && !(S.bytesReady && bytesFor && bytesFor.key === runKey())) prepareBytes();
       render();
@@ -1372,4 +1373,6 @@
   }
   FL.app = { state: S, load: load, render: render, demoBoard: demoBoard };
   load();
+  // Accepted from the suite's invitations card (signoff/assets/invites.js): read the list again.
+  window.addEventListener('signoff:invites-accepted', function () { if (!DEMO) load(); });
 })(window.FL = window.FL || {});
