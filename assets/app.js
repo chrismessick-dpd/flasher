@@ -235,13 +235,17 @@
     var dot = $('#account-dot'), t = $('#account-title'), s = $('#account-sub'), pill = $('#account-pill');
     s.classList.remove('sync-who');
     var who = S.catalog && S.catalog.login ? '@' + S.catalog.login : '';
+    // Before the first sync after a sign-in, the sign-in itself says who it is. Never the data repo:
+    // the suite's pills read as the wrong account that way (Chris, 2026-11-13).
+    var signedAs = !who && window.SignoffAuth ? window.SignoffAuth.status().login : '';
+    if (signedAs) who = '@' + signedAs;
     function line2(fallback) { s.textContent = who || fallback; if (who) s.classList.add('sync-who'); }
     pill.classList.toggle('is-syncing', !!S.syncing);
     if (DEMO) { dot.dataset.tone = 'ok'; t.textContent = 'Demo'; s.textContent = 'Made-up firmware, simulated board'; pill.title = 'Demo mode'; return; }
     var tok = C.auth.token();
     if (!tok) { dot.dataset.tone = 'idle'; t.textContent = 'Not signed in'; s.textContent = 'Click to sign in'; pill.title = 'Sign in to GitHub to list firmware'; return; }
     pill.title = 'Sync the firmware list with GitHub' + (S.catalog ? ' · ' + S.catalog.firmware.length + ' firmware, ' + (S.catalog.fte ? 'FTE: every project' : 'the projects shared with you') : '');
-    if (S.syncing) { dot.dataset.tone = 'busy'; t.textContent = 'Syncing…'; line2(FL.config.repo); return; }
+    if (S.syncing) { dot.dataset.tone = 'busy'; t.textContent = 'Syncing…'; line2('Checking your token'); return; }
     if (S.error || S.syncError) { dot.dataset.tone = 'error'; t.textContent = 'Sync failed'; s.textContent = 'Click to try again'; pill.title = S.error || S.syncError; return; }
     dot.dataset.tone = S.syncedAt ? 'ok' : 'idle';
     t.textContent = S.syncedAt ? 'Synced ' + relTime(S.syncedAt) : 'Not synced yet';
