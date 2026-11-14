@@ -128,7 +128,9 @@
     var redirect = location.origin + CALLBACK;
     return challenge(verifier).then(function (ch) {
       set(sessionStorage, K.pending, JSON.stringify({ state: state, verifier: verifier, returnTo: safeReturn(returnTo || location.href), redirect: redirect }));
-      var q = new URLSearchParams({ client_id: a.clientId, redirect_uri: redirect, state: state, code_challenge: ch, code_challenge_method: 'S256' });
+      // select_account: GitHub always shows its account picker. Without it GitHub signs in, with no
+      // screen, as whichever account is active on github.com in this browser (Chris, 2026-11-13).
+      var q = new URLSearchParams({ client_id: a.clientId, redirect_uri: redirect, state: state, code_challenge: ch, code_challenge_method: 'S256', prompt: 'select_account' });
       location.assign('https://github.com/login/oauth/authorize?' + q.toString());
     });
   }

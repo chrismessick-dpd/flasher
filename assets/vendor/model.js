@@ -1,3 +1,4 @@
+/* Vendored from ee_design_review/assets/model.js (the Signoff engine). Do not edit here: re-copy with tools/sync_vendor.py. */
 /* Shared Signoff engine (EE, ME, and FW). Edit it in ee_design_review only; me_design_review and
    fw_design_review vendor it unchanged with tools/sync_engine.py. Tool specifics go in assets/config.js. */
 /* Signoff data model: templates, project documents, progress, and merging.
@@ -269,6 +270,50 @@
     return out.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
   }
 
+  // ── History (Chris, 2026-11-13; ../signoff/docs/history.md) ──
+  // Built from the versions of a review file in git, never stored. recordDiff(before, after) lists the
+  // records whose stamp (updatedAt, updatedBy) differs between two versions of one review, in
+  // changesSince's shape plus before and after (the records themselves; before is null for a new one).
+  // before null: every record of after is new (the file's first version). Rows are attributed by each
+  // record's own stamp, never by who made the commit. Read-only; values are untrusted (escape them).
+  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec' };
+  function recordDiff(before, after, templates) {
+    if (!after || !after.meta) return [];
+    var key = function (r) { return r && typeof r === 'object' ? String(r.updatedAt || '') + '|' + String(r.updatedBy || '') : ''; };
+    return changesSince(after, '', templates).filter(function (row) {
+      var a = row.kind === 'meta' ? after.meta : (after[HIST_MAP[row.kind]] || {})[row.id];
+      var b = !before ? null : row.kind === 'meta' ? before.meta : (before[HIST_MAP[row.kind]] || {})[row.id];
+      if (b && key(a) === key(b)) return false;
+      row.before = b || null; row.after = a || null;
+      return true;
+    });
+  }
+  // versions: newest first, [{ doc, commit: { sha, at, login } }]. Every change made in each version,
+  // newest first by the record's own time, each with commit (the version that first had it). The
+  // oldest version given counts as all new only when it's the file's first (opts.complete); otherwise
+  // it's the base the next one is compared with and adds no rows.
+  function historyRows(versions, templates, opts) {
+    var out = [], v = versions || [];
+    for (var i = 0; i < v.length; i++) {
+      var older = v[i + 1];
+      if (!older && !(opts && opts.complete)) break;
+      recordDiff(older ? older.doc : null, v[i].doc, templates).forEach(function (row) { row.commit = v[i].commit || null; out.push(row); });
+    }
+    return out.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+  }
+  // Rows (newest first) folded into blocks: a run by the same person (by), each row within gapMs of the
+  // one after it, on the same calendar day (local time). gapMs 0: one block per row.
+  function historyBlocks(rows, gapMs) {
+    var out = [], day = function (t) { var d = new Date(t); return isNaN(d) ? '' : d.toDateString(); };
+    (rows || []).forEach(function (r) {
+      var b = out[out.length - 1], last = b && b.rows[b.rows.length - 1];
+      var fits = b && gapMs > 0 && b.by === r.by && day(last.at) === day(r.at) && (Date.parse(last.at) - Date.parse(r.at)) <= gapMs;
+      if (fits) { b.rows.push(r); b.start = r.at; }
+      else out.push({ by: r.by, start: r.at, end: r.at, rows: [r] });
+    });
+    return out;
+  }
+
   var RECENT = 6;   // comments kept in summary.recent
   function projectSummary(project, templates) {
     var stats = projectStats(project, templates), meta = project.meta, checklists = {};
@@ -500,22 +545,42 @@
   // "MCU (UART), Display board" -> [{ name: 'MCU', label: 'UART' }, { name: 'Display board', label: '' }]
   // Brackets at the end are a signal, rail, or detail ("MCU (flash)" is the MCU). A name in double quotes
   // may hold commas and brackets: "Sensor, ADC" (I2C), "Sensor (ADC)".
+  // A direction may end the brackets (ticket 8, 2026-11-13): "MCU (UART, both ways)", "Sensor (I2C, in)",
+  // "(out)". Out, from this block to the named one, is what a link means without one. dir is 'in',
+  // 'out', 'both', or ''.
+  var SPEC_DIR = /(?:^|,\s*)(in|out|both ways|both)\s*$/i;
+  function specLinkDir(inner) {
+    var s = String(inner || '').trim(), m = SPEC_DIR.exec(s);
+    if (!m) return { label: s, dir: '' };
+    var d = m[1].toLowerCase();
+    return { label: s.slice(0, m.index).trim(), dir: d === 'both ways' ? 'both' : d };
+  }
   function specLinkItems(text) {
-    var parts = [], cur = '', q = false;
-    String(text || '').split('').forEach(function (ch) { if (ch === '"') q = !q; if (ch === ',' && !q) { parts.push(cur); cur = ''; } else cur += ch; });
+    // A comma inside brackets doesn't split items: "MCU (UART, in)" is one.
+    var parts = [], cur = '', q = false, depth = 0;
+    String(text || '').split('').forEach(function (ch) {
+      if (ch === '"') q = !q;
+      else if (!q && ch === '(') depth++;
+      else if (!q && ch === ')' && depth) depth--;
+      if (ch === ',' && !q && !depth) { parts.push(cur); cur = ''; } else cur += ch;
+    });
     parts.push(cur);
     return parts.map(function (t) {
       var m = /^\s*"([^"]*)"\s*(?:\(([^()]*)\))?\s*$/.exec(t);
-      if (m) return { name: m[1].trim(), label: (m[2] || '').trim() };
+      // dir only when one is written, so an item without one reads as before.
+      function item(name, inner) { var dd = specLinkDir(inner), o = { name: name, label: dd.label }; if (dd.dir) o.dir = dd.dir; return o; }
+      if (m) return item(m[1].trim(), m[2]);
       m = /^\s*(.*?)\s*(?:\(([^()]*)\))?\s*$/.exec(t);
-      return { name: m[1], label: (m[2] || '').trim() };
+      return item(m[1], m[2]);
     }).filter(function (x) { return x.name; });
   }
   function specLinkText(items) {
     return items.map(function (x) {
       var n = String(x.name).replace(/"/g, '');
       if (/[,()]/.test(n)) n = '"' + n + '"';
-      return n + (x.label ? ' (' + x.label + ')' : '');
+      var dir = x.dir === 'both' ? 'both ways' : x.dir === 'in' || x.dir === 'out' ? x.dir : '';
+      var inner = [x.label || '', dir].filter(Boolean).join(', ');
+      return n + (inner ? ' (' + inner + ')' : '');
     }).join(', ');
   }
   // Does a link item name this title? By its name, or by its name and brackets together, so a heading
@@ -603,14 +668,30 @@
   }
 
   function cleanSection(r) {
-    var lv = parseInt(r.level, 10);
-    return { id: String(r.id), order: typeof r.order === 'number' && isFinite(r.order) ? r.order : 0,
+    var lv = parseInt(r.level, 10), labs = specLabels(r.labels);
+    var out = { id: String(r.id), order: typeof r.order === 'number' && isFinite(r.order) ? r.order : 0,
       level: lv >= 1 && lv <= 4 ? lv : 1, title: String(r.title == null ? '' : r.title).slice(0, 200),
       kind: oneOf(specKinds(), r.kind, ''), body: String(r.body == null ? '' : r.body).slice(0, SPEC_BODY_MAX),
       createdAt: r.createdAt || '', updatedAt: r.updatedAt || '', updatedBy: r.updatedBy || '',
       conflictOf: typeof r.conflictOf === 'string' ? r.conflictOf.slice(0, 80) : '',
       // Where the block sits in the flow diagram, once someone has arranged it (else laid out).
       pos: specPos(r.pos) };
+    // Labels dragged off their place on this block's lines (Chris, 2026-11-13), only when there are any.
+    if (labs) out.labels = labs;
+    return out;
+  }
+  // { '<other section id>|<link word>': { t, x, y } }: a dragged label's place along its line (0 to 1) and,
+  // when it was pulled off the line, its offset from there (drawn with an arrow back to the line).
+  function specLabels(v) {
+    if (!v || typeof v !== 'object') return null;
+    var out = {}, n = 0;
+    Object.keys(v).forEach(function (k) {
+      if (n >= 100 || typeof k !== 'string' || k.length > 120) return;
+      var q = v[k], t = q && Number(q.t), x = q && Number(q.x || 0), y = q && Number(q.y || 0);
+      if (!isFinite(t) || !isFinite(x) || !isFinite(y)) return;
+      out[k] = { t: Math.round(Math.max(0, Math.min(1, t)) * 1000) / 1000, x: Math.max(-3000, Math.min(3000, Math.round(x))), y: Math.max(-3000, Math.min(3000, Math.round(y))) }; n++;
+    });
+    return n ? out : null;
   }
   function specPos(v) {
     if (!v || typeof v !== 'object') return null;
@@ -681,6 +762,82 @@
         order: (typeof lose.order === 'number' ? lose.order : 0) + 0.001, hist: [], createdAt: lose.updatedAt || '', deleted: false });
     });
     return out;
+  }
+
+  // ── Resolving a conflict copy in one step (Chris, 2026-11-13; signoff/docs/history.md) ──
+  // specResolvePlan(sectionBody, copyBody) lists what the copy has that the section lacks, piece by piece.
+  // A piece is one sentence of a prose line (specSentences, so marks never split), or a whole line of
+  // anything else: a gist (>), a list item, a table row, a heading, or a Parts:, Supplies:, Connects:,
+  // Uses:, or Check: line. A copy piece equal (raw text, marks included) to a section piece is already
+  // there. Otherwise it changes the section piece of the same sort that shares most of its words (at
+  // least 60%, by specPlain), or it's new and goes after the section piece that the copy piece before
+  // it matched. Items: { mode: 'change', at, text, was } or { mode: 'add', after (-1: first), text }.
+  // specResolveApply(sectionBody, plan, picks) writes the picked items (picks[i] true) into the body.
+  // Only lines it changes are rebuilt; every other line keeps its bytes.
+  var SPEC_LINE_KEYS = /^\s*(?:>|[-*+]\s|\d+[.)]\s|\||#|(?:parts|supplies|connects|uses|check)\s*:)/i;
+  function specPieces(body) {
+    var lines = String(body || '').split('\n'), pieces = [];
+    lines.forEach(function (line, li) {
+      if (!line.trim()) return;
+      if (SPEC_LINE_KEYS.test(line)) { pieces.push({ line: li, prose: false, text: line.trim() }); return; }
+      specSentences(line, 0, line.length).forEach(function (r) { pieces.push({ line: li, prose: true, text: line.slice(r[0], r[1]) }); });
+    });
+    return { lines: lines, pieces: pieces };
+  }
+  function specPieceSort(pc) { return pc.prose ? 'prose' : (/^\s*([^\s\w]+|\w+\s*:)/.exec(pc.text) || ['', 'line'])[1].toLowerCase(); }
+  function specLikeness(a, b) {
+    // Words only: a table's bars or a list's dash shared by every row isn't likeness.
+    var words = function (t) { return specPlain(t).toLowerCase().split(/\s+/).filter(function (w) { return /\w/.test(w); }); };
+    var wa = words(a), wb = words(b), n = 0;
+    if (!wa.length || !wb.length) return 0;
+    var pool = wb.slice();
+    wa.forEach(function (w) { var k = pool.indexOf(w); if (k >= 0) { n++; pool.splice(k, 1); } });
+    return n / Math.max(wa.length, wb.length);
+  }
+  function specResolvePlan(sectionBody, copyBody) {
+    var sec = specPieces(sectionBody).pieces, cp = specPieces(copyBody).pieces, anchor = -1, taken = {}, items = [];
+    cp.forEach(function (pc) {
+      var same = -1;
+      sec.forEach(function (s, i) { if (same < 0 && s.text === pc.text) same = i; });
+      if (same >= 0) { anchor = same; return; }
+      var best = -1, score = 0, sort = specPieceSort(pc);
+      sec.forEach(function (s, i) {
+        if (taken[i] || specPieceSort(s) !== sort) return;
+        var l = specLikeness(pc.text, s.text); if (l > score) { score = l; best = i; }
+      });
+      if (score >= 0.6) { taken[best] = 1; anchor = best; items.push({ mode: 'change', at: best, text: pc.text, was: sec[best].text, prose: pc.prose }); }
+      else items.push({ mode: 'add', after: anchor, text: pc.text, prose: pc.prose });
+    });
+    return { items: items };
+  }
+  function specResolveApply(sectionBody, plan, picks) {
+    var sp = specPieces(sectionBody), lines = sp.lines, sec = sp.pieces, swap = {}, after = {}, changed = {};
+    (plan.items || []).forEach(function (it, i) {
+      if (!picks || !picks[i]) return;
+      if (it.mode === 'change') swap[it.at] = it.text;
+      else (after[it.after] = after[it.after] || []).push(it);
+    });
+    // Each section line as its pieces (prose) or itself, with new lines queued after it.
+    var parts = lines.map(function () { return null; }), extra = lines.map(function () { return []; }), head = [];
+    sec.forEach(function (s, i) {
+      if (!parts[s.line]) parts[s.line] = [];
+      parts[s.line].push(swap[i] != null ? swap[i] : s.text);
+      if (swap[i] != null) changed[s.line] = 1;
+      (after[i] || []).forEach(function (it) {
+        if (it.prose && s.prose) { parts[s.line].push(it.text); changed[s.line] = 1; }
+        else extra[s.line].push(it.text);
+      });
+    });
+    (after[-1] || []).forEach(function (it) { head.push(it.text); });
+    var out = head.slice();
+    lines.forEach(function (line, li) {
+      if (changed[li]) {
+        var lead = /^\s*/.exec(line)[0];
+        out.push(lead + (SPEC_LINE_KEYS.test(line) ? parts[li][0] : parts[li].join(' ')));
+      } else out.push(line);
+      extra[li].forEach(function (t) { out.push(t); });
+    });
+    return out.join('\n');
   }
 
   function newSection(fields, user) {
@@ -754,6 +911,10 @@
       if ((ch === '.' || ch === '!' || ch === '?') && (se || !inSpan(i))) {
         var j = i + 1;
         while (j < e && /[)"'’”]/.test(body[j])) j++;
+        // A tag written right after the stop ("designs.@req Uses …") is the sentence's own: it ends
+        // after the tag (ticket 4, 2026-11-13). With a space ("designs. @req Uses …") it starts the next.
+        var tg = /^@req\b:?/i.exec(body.slice(j, Math.min(e, j + 5)));
+        if (tg && (j + tg[0].length >= e || /\s/.test(body[j + tg[0].length]))) j += tg[0].length;
         if (j < e && !/\s/.test(body[j])) continue;
         var k2 = j; while (k2 < e && /\s/.test(body[k2])) k2++;
         if (!se && ch === '.' && k2 < e && !specStopEnds(body, s, i, body.slice(k2, Math.min(e, k2 + 40)))) continue;
@@ -933,7 +1094,7 @@
           if (!id || id === s.id) return;
           if (uses.indexOf(id) < 0) uses.push(id);
           // Brackets that are part of the title ("Sensor (ADC)") aren't a signal name.
-          edges.push({ id: id, word: bk.word, label: it.label && ctx.titles[specUseFull(it).toLowerCase()] !== id ? it.label : '' });
+          edges.push({ id: id, word: bk.word, label: it.label && ctx.titles[specUseFull(it).toLowerCase()] !== id ? it.label : '', dir: it.dir || '' });
         });
         if (bk.type === 'parts') bk.items.forEach(function (n) { if (parts.indexOf(n) < 0) parts.push(n); });
         (bk.units || []).forEach(function (u) {
@@ -1265,7 +1426,7 @@
       if (!w) return l;
       var items = specLinkItems(l.replace(specLinkRe(w), ''));
       if (!items.some(function (x) { return specUseIs(x, key); })) return l;
-      return w + ': ' + specLinkText(items.map(function (x) { return specUseIs(x, key) ? { name: to, label: x.name.toLowerCase() === key ? x.label : '' } : x; }));
+      return w + ': ' + specLinkText(items.map(function (x) { return specUseIs(x, key) ? Object.assign({}, x, { name: to, label: x.name.toLowerCase() === key ? x.label : '' }) : x; }));
     }).join('\n');
   }
   // Renaming a section (from the diagram): the records to write, its own and every section whose
@@ -2130,9 +2291,9 @@
     newProject: newProject, checklistRows: checklistRows, countStatuses: countStatuses,
     projectStats: projectStats, reqsEnabled: reqsEnabled, projectSummary: projectSummary, withSummary: withSummary, projectGroups: projectGroups,
     isAssembly: isAssembly, cleanPlPart: cleanPlPart, plSlim: plSlim, plWaiting: plWaiting,
-    liveComments: liveComments, retiredItems: retiredItems, changesSince: changesSince,
+    liveComments: liveComments, retiredItems: retiredItems, changesSince: changesSince, recordDiff: recordDiff, historyRows: historyRows, historyBlocks: historyBlocks,
     isRevNote: isRevNote, stripRevNote: stripRevNote, revNotes: revNotes,
-    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain,
+    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specLinkDir: specLinkDir, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specResolvePlan: specResolvePlan, specResolveApply: specResolveApply, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain,
     specSpans: specSpans, specCells: specCells, specUseIs: specUseIs, specUseId: specUseId, specRemoveUnit: specRemoveUnit, specBrokenMarks: specBrokenMarks, SPEC_BODY_MAX: SPEC_BODY_MAX, specTooLong: specTooLong, specKindLabel: specKindLabel, specKindPlural: specKindPlural, specSentences: specSentences, specContext: specContext, specBlocks: specBlocks, specAnalysis: specAnalysis, specEdit: specEdit,
     specToEditor: specToEditor, specFromEditor: specFromEditor, specSplit: specSplit, specSave: specSave, specToText: specToText, specSaveAll: specSaveAll, specSetLine: specSetLine, specUsesNames: specUsesNames, specRenameUses: specRenameUses, specRename: specRename, specAddBlock: specAddBlock, specMoveBlock: specMoveBlock, specNest: specNest, specGroup: specGroup, specUngroup: specUngroup, specCommentTags: specCommentTags, specMarkdown: specMarkdown, specSummary: specSummary, specTemplate: specTemplate,
     newer: newer, mergeMaps: mergeMaps, mergeProjects: mergeProjects, mergeLocalCopies: mergeLocalCopies,

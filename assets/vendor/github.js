@@ -1,3 +1,4 @@
+/* Vendored from ee_design_review/assets/github.js (the Signoff engine). Do not edit here: re-copy with tools/sync_vendor.py. */
 /* Shared Signoff engine (EE, ME, and FW). Edit it in ee_design_review only; me_design_review and
    fw_design_review vendor it unchanged with tools/sync_engine.py. Tool specifics go in assets/config.js. */
 /* GitHub storage for Signoff.
@@ -609,6 +610,46 @@
     put: function (entry, demo) { return handoffTx(demo, 'readwrite', function (s) { return s.put(entry); }); },
     get: function (id, demo) { return handoffTx(demo, 'readonly', function (s) { return s.get(id); }); },
     remove: function (id, demo) { return handoffTx(demo, 'readwrite', function (s) { return s.delete(id); }); }
+  };
+
+  /* The versions of one file in git, newest first, a page at a time (the History panel;
+     ../signoff/docs/history.md). Read-only.
+       path:  the file, e.g. 'projects/<id>.json'
+       opts:  { page (1…), perPage (default 20, at most 100), cache }
+       cache: { commits: { <commit sha>: blob sha | '' (the file isn't there) }, blobs: { <blob sha>: text } }.
+              Commits and blobs never change, so a cached version costs no call; pass the same object
+              every time (the caller may keep it, e.g. in IndexedDB).
+     Resolves { versions: [{ commit: { sha, at, login, name, message }, blob, text }], more }: more is
+     true when another page may follow. A version where the file is gone (deleted or moved) has text null. */
+  GitHubStore.prototype.fileHistory = function (path, opts) {
+    var self = this;
+    opts = opts || {};
+    var per = Math.max(1, Math.min(100, opts.perPage || 20)), page = Math.max(1, opts.page || 1);
+    var cache = opts.cache || {};
+    cache.commits = cache.commits || {}; cache.blobs = cache.blobs || {};
+    var q = '/commits?path=' + encodeURIComponent(path) + '&sha=' + encodeURIComponent(this.cfg.branch || 'main') + '&per_page=' + per + '&page=' + page;
+    return this.api(q).then(function (list) {
+      list = Array.isArray(list) ? list : [];
+      return Promise.all(list.map(function (c) {
+        var info = c.commit || {}, au = info.author || {}, cm = info.committer || {};
+        var commit = { sha: String(c.sha || ''), at: String(au.date || cm.date || ''), login: String((c.author && c.author.login) || ''),
+          name: String(au.name || ''), message: String(info.message || '') };
+        var known = cache.commits[commit.sha];
+        var blob = known != null ? Promise.resolve(known) : self.api('/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(commit.sha))
+          .then(function (f) {
+            var sha = String((f && f.sha) || '');
+            // The contents API inlines files up to 1 MB; larger ones come back without content.
+            if (sha && f.content && f.encoding === 'base64' && cache.blobs[sha] == null) cache.blobs[sha] = b64Decode(f.content);
+            cache.commits[commit.sha] = sha;
+            return sha;
+          }, function (err) { if (err.status === 404) { cache.commits[commit.sha] = ''; return ''; } throw err; });
+        return blob.then(function (sha) {
+          if (!sha) return { commit: commit, blob: '', text: null };
+          if (cache.blobs[sha] != null) return { commit: commit, blob: sha, text: cache.blobs[sha] };
+          return self.blob(sha).then(function (text) { cache.blobs[sha] = text; return { commit: commit, blob: sha, text: text }; });
+        });
+      })).then(function (versions) { return { versions: versions, more: list.length === per }; });
+    });
   };
 
   S.GitHubStore = GitHubStore;
