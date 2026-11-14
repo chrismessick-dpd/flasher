@@ -1,4 +1,3 @@
-/* Vendored from ee_design_review/assets/model.js (the Signoff engine). Do not edit here: re-copy with tools/sync_vendor.py. */
 /* Shared Signoff engine (EE, ME, and FW). Edit it in ee_design_review only; me_design_review and
    fw_design_review vendor it unchanged with tools/sync_engine.py. Tool specifics go in assets/config.js. */
 /* Signoff data model: templates, project documents, progress, and merging.
@@ -417,7 +416,9 @@
   function liveComments(project, itemId) {
     return Object.keys(project.comments).map(function (k) { return project.comments[k]; })
       .filter(function (c) { return !c.deleted && (itemId === undefined || c.item === itemId); })
-      .sort(function (a, b) { return (a.at || '').localeCompare(b.at || ''); });
+      // Ties (comments made in one go, such as a Fabcheck send) by id, so the order, and the
+      // summary's `recent` built from it, is the same in every browser.
+      .sort(function (a, b) { return (a.at || '').localeCompare(b.at || '') || String(a.id || '').localeCompare(String(b.id || '')); });
   }
 
   // Notes for the next revision: comments tagged @revnotes, grouped by the check they're on.
@@ -636,17 +637,41 @@
   // updatedAt is in the other's hist) the older edit is kept as a "(conflict copy)" section right
   // after it, so no text is lost. The copy's id comes from the edit it keeps, so every merge of the
   // same two copies makes the same one, once.
-  function mergeSpec(a, b) {
-    var out = mergeMaps(a, b);
+  // opts.since: a's sections stamped before it are known to be synced already (a is this browser's
+  // copy, and nobody here has edited them since it last synced). Such a section can't be one side
+  // of a conflict: it's an older version of b's, even when b moved on more than SPEC_HIST edits
+  // since and its hist no longer reaches back to it (2026-11-13: a copy left in a browser for a
+  // few hours split five of a co-worker's sections into conflict copies). '\uffff' marks all of a
+  // as synced; '' or no opts keeps the hist test alone.
+  // opts.base: { section id: specStampKey } of the version a's holder last pulled (specBase). With
+  // it the merge is three-way and exact, whatever the clocks say: a section a still has as pulled
+  // wasn't edited there, so b's is taken; one b still has as pulled was edited only in a, so a's is
+  // taken (even if a's clock stamped it earlier); only one changed on both sides is a conflict. A
+  // section the base doesn't list falls back to since, then the hist test.
+  function specStampKey(r) { return r && typeof r === 'object' ? String(r.updatedAt || '') + '|' + String(r.updatedBy || '') : ''; }
+  function specBase(project) {
+    var out = {}, m = project && project.spec || {};
+    Object.keys(m).forEach(function (k) { if (m[k] && typeof m[k] === 'object') out[k] = specStampKey(m[k]); });
+    return out;
+  }
+  function mergeSpec(a, b, opts) {
+    var out = mergeMaps(a, b), since = opts && opts.since || '', base = opts && opts.base || null;
     Object.keys(a || {}).forEach(function (k) {
       var x = a[k], y = (b || {})[k];
       if (!x || !y || x === y || typeof x !== 'object' || typeof y !== 'object') return;
       if ((x.updatedAt || '') === (y.updatedAt || '') && (x.updatedBy || '') === (y.updatedBy || '')) return;
-      var hx = Array.isArray(x.hist) ? x.hist : [], hy = Array.isArray(y.hist) ? y.hist : [];
-      // Both sides must carry history: a section built or never edited (no hist) is the base the other
-      // was edited from, so newer wins (a demo rebuilt under an open tab, sections from before hist).
-      if (!hx.length || !hy.length) return;
-      if (hy.indexOf(x.updatedAt) >= 0 || hx.indexOf(y.updatedAt) >= 0) return;
+      var known = base && Object.prototype.hasOwnProperty.call(base, k);
+      if (known && specStampKey(x) === base[k]) { out[k] = y; return; }   // not edited in a
+      if (known && specStampKey(y) === base[k]) { out[k] = x; return; }   // edited only in a
+      if (!known) {
+        if (since && (x.updatedAt || '') < since) return;
+        var hx = Array.isArray(x.hist) ? x.hist : [], hy = Array.isArray(y.hist) ? y.hist : [];
+        // Both sides must carry history: a section built or never edited (no hist) is the base the other
+        // was edited from, so newer wins (a demo rebuilt under an open tab, sections from before hist).
+        if (!hx.length || !hy.length) return;
+        if (hy.indexOf(x.updatedAt) >= 0 || hx.indexOf(y.updatedAt) >= 0) return;
+      }
+      // Edited on both sides.
       var win = newer(x, y), lose = win === x ? y : x;
       if (lose.deleted) return;
       if (!win.deleted && String(win.body || '') === String(lose.body || '') && String(win.title || '') === String(lose.title || '') && win.kind === lose.kind && win.level === lose.level) return;
@@ -1188,7 +1213,7 @@
   }
 
   // Comments tagged @req (on a check, a requirement, or the whole review), oldest first: they wait
-  // in Scribe's Write as requirements list beside the flagged sentences, until handled
+  // in Scribe's Requirements to make list beside the flagged sentences, until handled
   // (reqDone: the comment's words are left as written).
   function specCommentTags(project) {
     return liveComments(project).filter(function (c) { return !c.reqDone && SPEC_TAG.test(String(c.text || '')); }).map(function (c) {
@@ -1545,7 +1570,8 @@
     return out;
   }
 
-  function mergeProjects(local, remote) {
+  // opts: { since, base } for the Scribe sections, see mergeSpec.
+  function mergeProjects(local, remote, opts) {
     if (!local) return remote;
     if (!remote) return local;
     var versions = {};
@@ -1567,7 +1593,7 @@
       reqs: mergeMaps(local.reqs || {}, remote.reqs || {}),
       // Only once either copy has one, so documents without revisions keep their bytes.
       revisions: local.revisions || remote.revisions ? mergeMaps(local.revisions || {}, remote.revisions || {}) : undefined,
-      spec: local.spec || remote.spec ? mergeSpec(local.spec || {}, remote.spec || {}) : undefined,
+      spec: local.spec || remote.spec ? mergeSpec(local.spec || {}, remote.spec || {}, opts) : undefined,
       // Derived (see projectSummary): carried along for writers that can't rebuild it.
       summary: local.summary && remote.summary && (local.summary.at || '') > (remote.summary.at || '') ? local.summary : remote.summary || local.summary
     };
@@ -1823,7 +1849,9 @@
   // Working copies (slug -> doc) written by another tab, or by Fabcheck's "Send to Signoff",
   // merged into ours. Projects match by id, not slug; a new one keeps its slug unless that
   // slug is taken here. changed is false when theirs adds nothing, so callers don't write back.
-  function mergeLocalCopies(ours, theirs) {
+  // opts.since(id): mergeProjects' since for our copy of that project (see mergeSpec).
+  function mergeLocalCopies(ours, theirs, opts) {
+    var sinceFor = opts && opts.since || function () { return ''; };
     var out = {}, bySlug = {}, changed = false;
     Object.keys(ours || {}).forEach(function (slug) { out[slug] = ours[slug]; bySlug[ours[slug].id] = slug; });
     Object.keys(theirs || {}).forEach(function (slug) {
@@ -1831,7 +1859,7 @@
       if (!doc || !doc.id || !doc.meta) return;
       var mine = bySlug[doc.id];
       if (mine) {
-        var merged = mergeProjects(out[mine], doc);
+        var merged = mergeProjects(out[mine], doc, { since: sinceFor(doc.id) });
         if (stableStringify(merged) !== stableStringify(out[mine])) { out[mine] = merged; changed = true; }
         return;
       }
@@ -2104,7 +2132,7 @@
     isAssembly: isAssembly, cleanPlPart: cleanPlPart, plSlim: plSlim, plWaiting: plWaiting,
     liveComments: liveComments, retiredItems: retiredItems, changesSince: changesSince,
     isRevNote: isRevNote, stripRevNote: stripRevNote, revNotes: revNotes,
-    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain,
+    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain,
     specSpans: specSpans, specCells: specCells, specUseIs: specUseIs, specUseId: specUseId, specRemoveUnit: specRemoveUnit, specBrokenMarks: specBrokenMarks, SPEC_BODY_MAX: SPEC_BODY_MAX, specTooLong: specTooLong, specKindLabel: specKindLabel, specKindPlural: specKindPlural, specSentences: specSentences, specContext: specContext, specBlocks: specBlocks, specAnalysis: specAnalysis, specEdit: specEdit,
     specToEditor: specToEditor, specFromEditor: specFromEditor, specSplit: specSplit, specSave: specSave, specToText: specToText, specSaveAll: specSaveAll, specSetLine: specSetLine, specUsesNames: specUsesNames, specRenameUses: specRenameUses, specRename: specRename, specAddBlock: specAddBlock, specMoveBlock: specMoveBlock, specNest: specNest, specGroup: specGroup, specUngroup: specUngroup, specCommentTags: specCommentTags, specMarkdown: specMarkdown, specSummary: specSummary, specTemplate: specTemplate,
     newer: newer, mergeMaps: mergeMaps, mergeProjects: mergeProjects, mergeLocalCopies: mergeLocalCopies,
