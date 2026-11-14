@@ -2046,6 +2046,22 @@
   function isoTime(v) { return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(v) ? v : ''; }
   function hex(v, re) { v = typeof v === 'string' ? v.toLowerCase() : ''; return re.test(v) ? v : ''; }
 
+  // A zip stored in parts (GitHubStore.splitParts): its parts' paths in order, each the zip's own
+  // path plus .001, .002, …, or null when it's one file. A list that skips or renames one is
+  // refused (null parts and no zip file means the read says it's missing). With `rel`, the parts
+  // come back as { path, rel }, rel beside the zip's rel (cleanRun).
+  function zipParts(path, parts, rel) {
+    if (!Array.isArray(parts) || !parts.length || parts.length > 999) return null;
+    var out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i] && typeof parts[i] === 'object' ? parts[i].path : parts[i], tail = '.' + ('00' + (i + 1)).slice(-3);
+      if (typeof p !== 'string' || p !== path + tail) return null;
+      out.push(rel ? { path: p, rel: rel + tail, size: +(parts[i] && parts[i].size) || 0 } : p);
+    }
+    return out;
+  }
+  function withParts(o, parts) { if (parts) o.parts = parts; return o; }
+
   // A stored revision record as it's safe to use: known enums, text cut to size.
   function cleanRevision(r, key) {
     var src = r.source && typeof r.source === 'object' ? r.source : {};
@@ -2056,7 +2072,7 @@
       id: key, label: clip(r.label, 40), title: clip(r.title, 200), status: oneOf(REV_STATUS, r.status, 'sent'),
       source: { tool: oneOf(['fabcheck'], src.tool, ''), run: RUN_ID.test(src.run || '') ? src.run : '', at: isoTime(src.at),
         package: { key: hex(pkg.key, HEX16), sha256: hex(pkg.sha256, HEX64), name: clip(pkg.name, 200) },
-        zip: zip ? { path: clip(zip.path, 400), sha256: hex(zip.sha256, HEX64), size: +zip.size || 0 } : null },
+        zip: zip ? withParts({ path: clip(zip.path, 400), sha256: hex(zip.sha256, HEX64), size: +zip.size || 0 }, zipParts(clip(zip.path, 400), zip.parts)) : null },
       fab: { house: clip(fab.house, 100), sentAt: isoDay(fab.sentAt), ref: clip(fab.ref, 100) },
       notes: clip(r.notes, 4000), createdAt: isoTime(r.createdAt), updatedAt: isoTime(r.updatedAt), updatedBy: clip(r.updatedBy, 100)
     };
@@ -2109,7 +2125,8 @@
     return stamp({
       id: uid('v'), label: clip(fields.label, 40), title: clip(fields.title, 200), status: oneOf(REV_STATUS, fields.status, 'sent'),
       source: { tool: 'fabcheck', run: run.id, at: run.at, package: { key: run.package.key, sha256: run.package.sha256, name: run.package.name },
-        zip: run.zip ? { path: run.zip.path, sha256: run.zip.sha256, size: run.zip.size } : null },
+        zip: run.zip ? Object.assign({ path: run.zip.path, sha256: run.zip.sha256, size: run.zip.size },
+          run.zip.parts ? { parts: run.zip.parts.map(function (p) { return p.path; }) } : {}) : null },
       fab: { house: clip(fields.house, 100), sentAt: isoDay(fields.sentAt), ref: clip(fields.ref, 100) },
       notes: clip(fields.notes, 4000), createdAt: t, deleted: false
     }, user);
@@ -2127,10 +2144,12 @@
     var z = pkg.zip && typeof pkg.zip === 'object' ? pkg.zip : null, zip = null;
     var m = z && typeof z.path === 'string' && z.path.indexOf('..') < 0 && /(?:^|\/)packages\/([0-9a-f]{16})\/([\w.+-][\w.+ -]{0,150}\.zip)$/.exec(z.path);
     if (m && HEX64.test(String(z.sha256 || '').toLowerCase())) {
-      zip = { rel: 'packages/' + m[1] + '/' + m[2], path: z.path, name: m[2], sha256: z.sha256.toLowerCase(), size: +z.size || 0, root: clip(z.root, 200),
+      var rel = 'packages/' + m[1] + '/' + m[2];
+      zip = { rel: rel, path: z.path, name: m[2], sha256: z.sha256.toLowerCase(), size: +z.size || 0, root: clip(z.root, 200),
         files: (Array.isArray(z.files) ? z.files : []).filter(function (f) { return f && typeof f === 'object'; }).slice(0, 2000).map(function (f) {
           return { path: clip(f.path, 400), to: clip(f.to, 400), size: +f.size || 0, sha256: hex(f.sha256, HEX64) };
         }) };
+      withParts(zip, zipParts(z.path, z.parts, rel));
     }
     var sum = run.summary && typeof run.summary === 'object' ? run.summary : {}, set = run.settings && typeof run.settings === 'object' ? run.settings : {};
     return {
@@ -2305,6 +2324,6 @@
     parseTable: parseTable, importReqs: importReqs, reqsCsv: reqsCsv,
     REV_STATUS: REV_STATUS, REV_STATUS_LABEL: REV_STATUS_LABEL, liveRevisions: liveRevisions, latestRevision: latestRevision,
     supersededBy: supersededBy, revisionForRun: revisionForRun, nextRevLabel: nextRevLabel, newRevision: newRevision,
-    cleanRevision: cleanRevision, cleanRun: cleanRun, groupRuns: groupRuns, zipFolders: zipFolders
+    cleanRevision: cleanRevision, cleanRun: cleanRun, zipParts: zipParts, groupRuns: groupRuns, zipFolders: zipFolders
   };
 })(window.Signoff = window.Signoff || {});

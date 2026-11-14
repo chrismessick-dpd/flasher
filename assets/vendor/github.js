@@ -489,15 +489,43 @@
 
   // A file's bytes, checked against the SHA-256 its record gives. Rejects with err.code 'missing'
   // when it isn't there and 'mismatch' when its checksum differs, so a changed file is never used.
+  // `path` may be a list: a file stored in parts (splitParts), joined in order, then checked whole.
   GitHubStore.prototype.readVerified = function (path, sha256, entries) {
-    return this.readBytes(path, entries).then(function (bytes) {
-      if (!bytes) { var e1 = new Error(path + ' isn’t in the repository'); e1.code = 'missing'; throw e1; }
+    var self = this, paths = Array.isArray(path) ? path : [path], name = paths.length > 1 ? paths[0].replace(/\.\d{3}$/, '') : paths[0];
+    return (entries ? Promise.resolve(entries) : this.listTree(paths[0].replace(/[^/]*$/, ''))).then(function (list) {
+      return Promise.all(paths.map(function (p) { return self.readBytes(p, list); }));
+    }).then(function (parts) {
+      if (parts.some(function (b) { return !b; })) { var e1 = new Error(name + ' isn’t in the repository'); e1.code = 'missing'; throw e1; }
+      var bytes = joinBytes(parts);
       return sha256Hex(bytes).then(function (got) {
-        if (got !== String(sha256 || '').toLowerCase()) { var e2 = new Error(path + ' doesn’t match its recorded SHA-256'); e2.code = 'mismatch'; throw e2; }
+        if (got !== String(sha256 || '').toLowerCase()) { var e2 = new Error(name + ' doesn’t match its recorded SHA-256'); e2.code = 'mismatch'; throw e2; }
         return bytes;
       });
     });
   };
+
+  function joinBytes(parts) {
+    if (parts.length === 1) return parts[0];
+    var n = parts.reduce(function (s, b) { return s + b.length; }, 0), out = new Uint8Array(n), at = 0;
+    parts.forEach(function (b) { out.set(b, at); at += b.length; });
+    return out;
+  }
+
+  // GitHub cuts off any one request that runs past about a minute (it answers 401 "Bad credentials",
+  // or the browser sees only "Failed to fetch"), whatever its size: measured 2026-11-14, a 3 MB blob
+  // sent over 80 s failed and a 20 MB one sent in 54 s was stored. So a big file is stored as parts
+  // of PART_BYTES (about 11 s each at 0.5 MB/s up), named <path>.001, .002, …; readVerified joins them.
+  var PART_BYTES = 4 * 1048576;
+  function splitParts(path, bytes) {
+    if (bytes.length <= PART_BYTES) return null;
+    var out = [];
+    for (var i = 0, k = 1; i < bytes.length; i += PART_BYTES, k++) out.push({ path: path + '.' + ('00' + k).slice(-3), bytes: bytes.subarray(i, Math.min(bytes.length, i + PART_BYTES)) });
+    return out;
+  }
+  GitHubStore.splitParts = splitParts;
+  GitHubStore.PART_BYTES = PART_BYTES;
+  // Blobs this size or more go up one at a time, so they don't share the line and run past the limit.
+  var BIG_BLOB = 512 * 1024;
 
   function sha256Hex(bytes) {
     return crypto.subtle.digest('SHA-256', bytes).then(function (d) {
@@ -509,8 +537,10 @@
      files: [{ path, bytes: Uint8Array } | { path, text } | { path, remove: true }]
      opts:  { message, onRetry(attempt), onProgress(done, total) }
      Files whose content already matches are skipped, so writing the same package twice
-     uploads nothing. Binary content goes up as blobs first; the commit then uses
-     force:false and is retried on a non-fast-forward, like sync.
+     uploads nothing. Binary content goes up as blobs first (small ones four at a time, then
+     big ones one by one, each retried when cut off); the commit then uses
+     force:false and is retried on a non-fast-forward, like sync. Split a file over
+     PART_BYTES with GitHubStore.splitParts first, or it may never get through.
      Resolves { pushed, skipped, commitUrl }. */
   GitHubStore.prototype.putFiles = function (files, opts) {
     var self = this, attempt = 0, uploaded = {};
@@ -529,19 +559,36 @@
         var skipped = items.length - changes.length;
         if (!changes.length) return { pushed: 0, skipped: skipped };
         var toUpload = changes.filter(function (it) { return !it.remove && !uploaded[it.sha]; });
-        var done = 0, next = 0;
-        function worker() {
-          if (next >= toUpload.length) return Promise.resolve();
-          var it = toUpload[next++];
+        var small = toUpload.filter(function (it) { return it.bytes.length < BIG_BLOB; });
+        var big = toUpload.filter(function (it) { return it.bytes.length >= BIG_BLOB; });
+        var done = 0;
+        // One blob, tried again twice when the request is cut off (no status, a 5xx, or the 401 GitHub
+        // gives a request that ran too long: the snapshot just read with this token, so it's not the token).
+        function upload(it, tries) {
           return self.api('/git/blobs', { method: 'POST', body: { content: bytesToB64(it.bytes), encoding: 'base64' } }).then(function (b) {
             if (b.sha !== it.sha) throw new Error('GitHub stored ' + it.path + ' with a different checksum');
             uploaded[it.sha] = true;
             done++;
             if (opts.onProgress) opts.onProgress(done, toUpload.length);
-            return worker();
+          }, function (err) {
+            var cut = !err.status || err.status >= 500 || err.status === 401;
+            if (cut && tries < 3) return upload(it, tries + 1);
+            if (cut) {
+              var e = new Error('GitHub cut off the upload of ' + it.path.replace(/^.*\//, '') + ' (' + (it.bytes.length / 1048576).toFixed(1) +
+                ' MB) three times. It drops any upload that takes over about a minute; try again on a faster connection');
+              e.status = err.status === 401 ? 0 : err.status;
+              throw e;
+            }
+            throw err;
           });
         }
-        return Promise.all([worker(), worker(), worker(), worker()]).then(function () {
+        var next = 0;
+        function worker() {
+          if (next >= small.length) return Promise.resolve();
+          return upload(small[next++], 1).then(worker);
+        }
+        function oneByOne(i) { return i >= big.length ? Promise.resolve() : upload(big[i], 1).then(function () { return oneByOne(i + 1); }); }
+        return Promise.all([worker(), worker(), worker(), worker()]).then(function () { return oneByOne(0); }).then(function () {
           return self.commit(snap, changes.map(function (it) {
             return it.remove ? { path: it.path, remove: true } : { path: it.path, blobSha: it.sha };
           }), opts.message || 'Signoff: update files');
