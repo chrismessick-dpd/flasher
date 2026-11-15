@@ -227,7 +227,7 @@
     var last = { updatedAt: '', updatedBy: '' };
     function see(rec) { if (rec && newer(last, rec) === rec) last = rec; }
     see(project.meta);
-    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec'].forEach(function (k) {
+    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec', 'tags'].forEach(function (k) {
       Object.keys(project[k] || {}).forEach(function (id) { see(project[k][id]); });
     });
     return last;
@@ -235,7 +235,7 @@
 
   // The records of a project edited after `since` (an ISO time; '' or missing: every record),
   // newest first, for the "unsynced changes" list. Read-only. Each entry:
-  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec',
+  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec' | 'tag',
   //     id, item (the check a comment or check record is about, '' if none),
   //     label (what it is), detail (its state or text), at, by, deleted }
   // Values come straight from the document (untrusted): callers escape them.
@@ -267,6 +267,7 @@
     each('reqs', function (r, id) { add('req', r, id, '', ((r.ref ? r.ref + ' ' : '') + cut(r.text, 120)).trim() || String(id), oneOf(REQ_VERIFY, r.verify, 'open')); });
     each('revisions', function (r, id) { add('revision', r, id, '', 'Revision ' + cut(r.label, 40), oneOf(REV_STATUS, r.status, '')); });
     each('spec', function (r, id) { add('spec', r, id, '', cut(r.title, 120) || 'Untitled section', r.deleted ? '' : 'description'); });
+    each('tags', function (r, id) { add('tag', r, id, '', '“' + cut(r.note, 120) + '”', r.deleted ? 'removed' : 'version ' + String(r.commit || '').slice(0, 7)); });
     return out.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
   }
 
@@ -276,7 +277,7 @@
   // changesSince's shape plus before and after (the records themselves; before is null for a new one).
   // before null: every record of after is new (the file's first version). Rows are attributed by each
   // record's own stamp, never by who made the commit. Read-only; values are untrusted (escape them).
-  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec' };
+  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec', tag: 'tags' };
   function recordDiff(before, after, templates) {
     if (!after || !after.meta) return [];
     var key = function (r) { return r && typeof r === 'object' ? String(r.updatedAt || '') + '|' + String(r.updatedBy || '') : ''; };
@@ -312,6 +313,49 @@
       else out.push({ by: r.by, start: r.at, end: r.at, rows: [r] });
     });
     return out;
+  }
+
+  // Restore this version (Chris, 2026-11-14: version tags; all but comments). The records to write so a
+  // review is again as it was in `older`, as new edits by `user`: checks, sections set aside, added checks,
+  // requirements, the Scribe description, and the details go back; ones added since are cleared (a check
+  // to review, a section back in review, the rest removed). Comments, Fabcheck revision tags, and version
+  // tags stay as they are. Pure: returns { maps: { key: { id: record } }, meta: record or null, count }.
+  // Applying the same to the review as it was before undoes it. opts.maps: the record maps to put back
+  // (Signoff PL: nodes and reqs); a record added since in any map but items and sections is removed.
+  var RESTORE_MAPS = ['items', 'sections', 'custom', 'reqs', 'spec'];
+  function restorePlan(live, older, user, opts) {
+    var out = { maps: {}, meta: null, count: 0 }, key = specStampKey, same = function (a, b) { return stableStringify(a) === stableStringify(b); };
+    var clone = function (x) { return JSON.parse(JSON.stringify(x)); };
+    ((opts && opts.maps) || RESTORE_MAPS).forEach(function (k) {
+      var L = live[k] || {}, O = older[k] || {}, ids = {};
+      Object.keys(L).concat(Object.keys(O)).forEach(function (id) { ids[id] = 1; });
+      Object.keys(ids).sort().forEach(function (id) {
+        var l = L[id], o = O[id], rec;
+        if (o && typeof o === 'object') {
+          if (l && (key(l) === key(o) || same(l, o))) return;
+          rec = clone(o);
+        } else if (l && typeof l === 'object' && !l.deleted) {
+          rec = k === 'items' ? { text: l.text, checklist: l.checklist } : k === 'sections' ? (l.na ? { na: false } : null)
+            : Object.assign(clone(l), { deleted: true });
+          if (!rec) return;
+          Object.keys(rec).forEach(function (f) { if (rec[f] === undefined) delete rec[f]; });
+        } else return;
+        if (rec.id === undefined && k !== 'items' && k !== 'sections') rec.id = id;
+        if (k === 'spec') { rec.updatedAt = l && l.updatedAt || rec.updatedAt; rec.hist = l && Array.isArray(l.hist) ? l.hist.slice() : rec.hist; specStamp(rec, user); }
+        else stamp(rec, user);
+        (out.maps[k] = out.maps[k] || {})[id] = rec; out.count++;
+      });
+    });
+    // The details, unless only their stamp differs (Signoff PL restamps them on every edit).
+    var bare = function (m) { var c = clone(m); delete c.updatedAt; delete c.updatedBy; return stableStringify(c); };
+    var meta = older.meta && live.meta ? Object.assign(clone(older.meta), { archived: !!live.meta.archived }, live.meta.deleted ? { deleted: true } : {}) : null;
+    if (meta && key(older.meta) !== key(live.meta) && bare(meta) !== bare(live.meta)) { out.meta = stamp(meta, user); out.count++; }
+    return out;
+  }
+  function restoreApply(project, plan) {
+    Object.keys(plan.maps).forEach(function (k) { project[k] = project[k] || {}; Object.keys(plan.maps[k]).forEach(function (id) { project[k][id] = plan.maps[k][id]; }); });
+    if (plan.meta) project.meta = plan.meta;
+    return project;
   }
 
   var RECENT = 6;   // comments kept in summary.recent
@@ -1755,6 +1799,8 @@
       // Only once either copy has one, so documents without revisions keep their bytes.
       revisions: local.revisions || remote.revisions ? mergeMaps(local.revisions || {}, remote.revisions || {}) : undefined,
       spec: local.spec || remote.spec ? mergeSpec(local.spec || {}, remote.spec || {}, opts) : undefined,
+      // Version tags (assets/history.js), records like any other; only once either copy has one.
+      tags: local.tags || remote.tags ? mergeMaps(local.tags || {}, remote.tags || {}) : undefined,
       // Derived (see projectSummary): carried along for writers that can't rebuild it.
       summary: local.summary && remote.summary && (local.summary.at || '') > (remote.summary.at || '') ? local.summary : remote.summary || local.summary
     };
@@ -2311,6 +2357,7 @@
     projectStats: projectStats, reqsEnabled: reqsEnabled, projectSummary: projectSummary, withSummary: withSummary, projectGroups: projectGroups,
     isAssembly: isAssembly, cleanPlPart: cleanPlPart, plSlim: plSlim, plWaiting: plWaiting,
     liveComments: liveComments, retiredItems: retiredItems, changesSince: changesSince, recordDiff: recordDiff, historyRows: historyRows, historyBlocks: historyBlocks,
+    restorePlan: restorePlan, restoreApply: restoreApply,
     isRevNote: isRevNote, stripRevNote: stripRevNote, revNotes: revNotes,
     specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specLinkDir: specLinkDir, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specResolvePlan: specResolvePlan, specResolveApply: specResolveApply, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain,
     specSpans: specSpans, specCells: specCells, specUseIs: specUseIs, specUseId: specUseId, specRemoveUnit: specRemoveUnit, specBrokenMarks: specBrokenMarks, SPEC_BODY_MAX: SPEC_BODY_MAX, specTooLong: specTooLong, specKindLabel: specKindLabel, specKindPlural: specKindPlural, specSentences: specSentences, specContext: specContext, specBlocks: specBlocks, specAnalysis: specAnalysis, specEdit: specEdit,

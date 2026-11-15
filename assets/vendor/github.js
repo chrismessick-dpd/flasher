@@ -184,6 +184,15 @@
   GitHubStore.prototype.blob = function (sha) {
     return this.api('/git/blobs/' + sha).then(function (b) { return b64Decode(b.content); });
   };
+  // One file's text as it was at a commit (a version tag's, assets/history.js). The contents API inlines
+  // files up to 1 MB; a larger one comes back without content, so it's read as its blob.
+  GitHubStore.prototype.fileAt = function (path, ref) {
+    var self = this;
+    return this.api('/contents/' + String(path).split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(ref)).then(function (f) {
+      if (!f || Array.isArray(f) || (f.type && f.type !== 'file')) throw new Error('That version isn’t a file.');
+      return f.content && f.encoding === 'base64' ? b64Decode(f.content) : self.blob(f.sha);
+    });
+  };
 
   /* Sync this repository.
      local:  { projectId: doc }    working copies that live here, including unsynced edits
