@@ -1374,7 +1374,7 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .rw-seg button { gap: 4px; font-size: 12.5px; padding: 6px 4px; }
 .rw-next { display: flex; align-items: baseline; gap: 8px; font-size: 13px; margin: 2px 0 14px; flex-wrap: wrap; }
 .rw-next .muted { font-size: 11.5px; }
-.rw-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.rw-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(96px, 30%, 260px), 1fr)); gap: 8px; margin-bottom: 8px; }
 .rw-pics:empty { display: none; }
 .rw-thumb { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-sunk); }
 .rw-thumb-img { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; padding: 0; background: none; font-size: 11px; cursor: zoom-in; }
@@ -1414,3 +1414,13 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .rwp-notes { margin-top: 18px; min-height: 26mm; border: 1px solid #d2d2d7; border-radius: 4px; padding: 6px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #86868b; break-inside: avoid; }
 @media print { .rwp-item + .rwp-item { break-before: page; } }
 @media (max-width: 600px) { .rwp-grid { grid-template-columns: 1fr; } .rwp-sign { grid-template-columns: 1fr 1fr; } }
+
+/* The rework pane's left edge widens it (app.js rwInspWidth); wide screens only. */
+.rw-grip { display: none; }
+@media (min-width: 861px) {
+  #inspector.is-rework { width: var(--rw-insp-w, 400px); }
+  #inspector.is-rework .rw-grip { display: block; position: absolute; left: -5px; top: 18px; bottom: 18px; width: 10px; cursor: ew-resize; z-index: 2; touch-action: none; }
+  #inspector.is-rework .rw-grip::after { content: ''; position: absolute; left: 3px; top: 50%; width: 4px; height: 44px; margin-top: -22px; border-radius: 2px; background: var(--hair-2); transition: background 0.15s; }
+  #inspector.is-rework .rw-grip:hover::after, #inspector.rw-resizing .rw-grip::after { background: var(--accent); height: 72px; margin-top: -36px; }
+  #inspector.rw-resizing { transition: none; user-select: none; }
+}
