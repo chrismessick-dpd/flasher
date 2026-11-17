@@ -64,7 +64,7 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   and USB ids stay in the manifest.
 
 - **Debug probe page (2026-11-17, Chris: "a web alternative to the ST programmer GUI", ST-LINK with a J-Link
-  toggle, MIT license; not committed).** `probe.html` and `assets/probe/` (README, *Debug probe*). Chris chose:
+  toggle, MIT license; pushed: `flasher` `33e6841`).** `probe.html` and `assets/probe/` (README, *Debug probe*). Chris chose:
   a new page in Flasher; the H563 and G0B1 first; option bytes edited with a diff and a typed confirmation,
   with the lock-for-good ones refused; registers from ST's SVDs, bundled. `LICENSE` (MIT) added. Research and
   the probe-only access test: `docs/stlink-webusb.md`. Tests: `tests/probe.html` (36) against the simulated
