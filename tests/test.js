@@ -221,6 +221,37 @@
     });
   });
 
+  // ── DFU detach: firmware with a DFU runtime interface (candleLight-style) ──
+  test('cleanBoard: detach ids are read, bad ones dropped', function () {
+    var b = I.cleanBoard('rt', {
+      flash: { base: '0x08000000', size: '0x80000' }, ram: { base: '0x20000000', size: '0x24000' }, dfu: { vid: '0x0483', pid: '0xDF11' },
+      run: { vid: '0x1209', pid: '0x0001' }, detach: [{ vid: '0x1D50', pid: '0x606F', name: 'Adapter' }, { vid: 'nope' }]
+    }, []);
+    eq(b.detach.length, 1, 'detach ids'); eq(b.detach[0].vid, 0x1D50); eq(b.detach[0].pid, 0x606F); eq(b.detach[0].name, 'Adapter');
+    eq(BOARD.detach.length, 0, 'a board without detach');
+  });
+  test('detach: DETACH to the runtime interface; a willDetach device needs no reset', function () {
+    var dev = F.runtimeDevice();
+    return D.detach(dev, { sleep: noSleep }).then(function (r) {
+      ok(dev.detached, 'detached'); eq(r.willDetach, true, 'bitWillDetach read'); eq(dev.resets, 0, 'resets');
+      ok(dev.log.indexOf('claim 1') >= 0, 'claimed the runtime interface');
+      ok(dev.log.some(function (l) { return l === 'class/interface req 0 value 1000 index 1'; }), 'the DETACH request: ' + dev.log.join('; '));
+    });
+  });
+  test('detach: without bitWillDetach, the host resets the device', function () {
+    var dev = F.runtimeDevice({ willDetach: false });
+    return D.detach(dev, { sleep: noSleep }).then(function (r) { ok(dev.detached); eq(r.willDetach, false); eq(dev.resets, 1, 'resets'); });
+  });
+  test('detach: a device that leaves the bus mid-request is still a success', function () {
+    var dev = F.runtimeDevice({ vanishOnDetach: true });
+    return D.detach(dev, { sleep: noSleep }).then(function () { ok(dev.detached); });
+  });
+  test('detach: no runtime interface, or a refused request, is an error', function () {
+    return rejects(D.detach(F.runtimeDevice({ noRuntime: true }), { sleep: noSleep }), /nodetach/, 'no runtime interface').then(function () {
+      return rejects(D.detach(F.runtimeDevice({ stallDetach: true }), { sleep: noSleep }), /refused/, 'stalled DETACH');
+    });
+  });
+
   // ── Serial ──
   test('the 1200-baud touch: open at 1200, drop DTR, hold, close', function () {
     var port = F.serialPort(), slept = [];

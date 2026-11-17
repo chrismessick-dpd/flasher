@@ -160,6 +160,7 @@ users.json            flasher_data only: the People list
       "dfu":   { "vid": "0x0483", "pid": "0xDF11", "name": "DFU in FS Mode" },
       "run":   { "vid": "0x0483", "pid": "0x5740", "name": "<USB product string>" },
       "runAlso": [{ "vid": "0x…", "pid": "0x…", "name": "<another firmware's product string>" }],
+      "detach": [{ "vid": "0x…", "pid": "0x…", "name": "<firmware with a DFU runtime interface>" }],
       "touchBaud": 1200,
       "layout": "@Internal Flash  /0x08000000/256*02Kg",
       "manualDfu": ["step", "step"],
@@ -182,6 +183,13 @@ users.json            flasher_data only: the People list
 - `runAlso` lists the USB ids of other firmware the same board may be running (a second code base
   built for it), each restarted with the same touch. Flasher looks for any of them, and the browser's
   list offers them all. It is kept apart from `run` so an older page still reads the manifest.
+- `detach` lists the USB ids of firmware the board may be running that has no serial port but a DFU
+  runtime interface (DFU 1.1 runtime mode: class 0xFE, subclass 1, protocol 1), such as candleLight.
+  Flasher restarts a board running it with DFU_DETACH over WebUSB instead of the touch, then writes
+  through the ROM bootloader as usual. It finds such a board without a list once this browser has
+  opened it. Otherwise the DFU list offers it beside the bootloader, and picking it restarts the
+  board. With `bitWillDetach` the firmware leaves the bus by itself; without it, Flasher resets the
+  device. On Windows, the runtime interface needs the WinUSB driver (Microsoft OS descriptors).
 - `layout` is the DfuSe layout to use if the browser can't read the device's alternate setting names.
 - A bridge board (*Bridge boards* above) is `"kind": "bridge"`, with `touch` (the host firmware's USB
   ids, a list), `bridge` (the passthrough port's id), `touchBaud`, `exitBaud`, `linkBaud`,

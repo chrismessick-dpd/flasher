@@ -342,6 +342,59 @@
     return Promise.resolve().then(function () { return d.opened && d.close(); }).catch(function () {});
   };
 
-  FL.dfuse = { Dfuse: Dfuse, DfuError: DfuError, parseLayout: parseLayout, parseFunctional: parseFunctional, pagesFor: pagesFor,
+  /* DFU runtime mode (DFU 1.1, section 5.1). Firmware with a runtime interface (class 0xFE, subclass 1,
+     protocol 1), such as candleLight, restarts into its bootloader when it gets DETACH. With
+     bitWillDetach (attribute bit 3) it leaves the bus by itself; otherwise the host resets it. Once the
+     request is out, the device may vanish mid-call, so errors after it are success.
+     opts: { log(text), sleep(ms) }. Resolves { willDetach } once the request is sent. */
+  function runtimeInterface(dev) {
+    var cfg = dev.configuration || (dev.configurations && dev.configurations[0]);
+    var found = null;
+    ((cfg && cfg.interfaces) || []).forEach(function (itf) {
+      (itf.alternates || []).forEach(function (a) {
+        if (!found && a.interfaceClass === 0xFE && a.interfaceSubclass === 1 && a.interfaceProtocol === 1) found = itf;
+      });
+    });
+    return found;
+  }
+  function detach(dev, opts) {
+    opts = opts || {};
+    var log = opts.log || function () {}, sleep = opts.sleep || defaultSleep;
+    var itf = null, willDetach = false, sent = false;
+    return Promise.resolve().then(function () {
+      return dev.opened ? null : dev.open();
+    }).then(function () {
+      return dev.configuration ? null : dev.selectConfiguration(1);
+    }).then(function () {
+      itf = runtimeInterface(dev);
+      if (!itf) throw DfuError('This firmware has no DFU runtime interface, so it can’t be asked to restart into its bootloader.', 'nodetach');
+      // The attributes, to know whether the device leaves the bus by itself.
+      var setup = { requestType: 'standard', recipient: 'device', request: 6, value: 0x0200, index: 0 };
+      return dev.controlTransferIn(setup, 9).then(function (head) {
+        if (head.status !== 'ok' || !head.data || head.data.byteLength < 4) return null;
+        return dev.controlTransferIn(setup, head.data.getUint16(2, true));
+      }).then(function (full) {
+        var f = full && full.status === 'ok' ? parseFunctional(full.data) : null;
+        willDetach = !!(f && (f.attributes & 0x08));
+      }).catch(function () { willDetach = false; });
+    }).then(function () {
+      return dev.claimInterface(itf.interfaceNumber);
+    }).then(function () {
+      log('Asking the firmware to restart into its bootloader (DFU detach)…');
+      sent = true;
+      return dev.controlTransferOut({ requestType: 'class', recipient: 'interface', request: REQ.DETACH, value: 1000, index: itf.interfaceNumber })
+        .then(function (r) {
+          if (r && r.status === 'stall') { sent = false; throw DfuError('The firmware refused the restart request (DFU detach).', 'nodetach'); }
+        }, function (e) { if (!sent) throw e; });   // it may leave the bus before answering
+    }).then(function () {
+      if (willDetach) return null;
+      // No bitWillDetach: the host's USB reset is what starts the bootloader.
+      return sleep(50).then(function () { return dev.reset ? dev.reset() : null; }).catch(function () {});
+    }).then(function () {
+      return Promise.resolve().then(function () { return dev.opened && dev.close(); }).catch(function () {});
+    }).then(function () { return { willDetach: willDetach }; });
+  }
+
+  FL.dfuse = { Dfuse: Dfuse, DfuError: DfuError, detach: detach, runtimeInterface: runtimeInterface, parseLayout: parseLayout, parseFunctional: parseFunctional, pagesFor: pagesFor,
     segmentAt: segmentAt, REQ: REQ, STATE: STATE, STATE_NAMES: STATE_NAMES, STATUS_TEXT: STATUS_TEXT, CMD: CMD, hex: hex };
 })(window.FL = window.FL || {});

@@ -376,7 +376,8 @@
     h += '<ol class="fl-steps">';
     h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Put the board in update mode</div>' +
       (canTouch && !S.skipTouch
-        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.</div>'
+        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.' +
+          (detachIds(b).length ? ' If the board runs <b>' + detachIds(b).map(function (x) { return esc(x.name || hex4(x.vid) + ':' + hex4(x.pid)); }).join('</b> or <b>') + '</b> instead, close that list: the next one offers it, and Flasher restarts it over USB.' : '') + '</div>'
         : '<div class="fl-step-sub">Press these on the board, then click <b>Flash board</b>:</div>' + buttonsHtml(b)) +
       (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board isn’t running firmware (new, blank, or stuck)</label>' : '') +
       '</div></li>';
@@ -460,6 +461,23 @@
       return list.filter(function (d) { return d.vendorId === b.dfu.vid && d.productId === b.dfu.pid; })[0] || null;
     });
   }
+  // Firmware with no serial port but a DFU runtime interface (the board's `detach` ids): restarted
+  // into the bootloader with DFU detach over WebUSB (FL.dfuse.detach) instead of the touch.
+  function detachIds(b) { return b.detach || []; }
+  function isDetach(b, d) { return detachIds(b).some(function (x) { return d.vendorId === x.vid && d.productId === x.pid; }); }
+  function findDetach(b) {
+    if (DEMO || !navigator.usb || !detachIds(b).length) return Promise.resolve(null);
+    return navigator.usb.getDevices().then(function (list) {
+      return list.filter(function (d) { return isDetach(b, d); })[0] || null;
+    });
+  }
+  function detachThenWait(dev, b) {
+    log('Found the board running ' + (dev.productName || 'firmware without a serial port') + '.');
+    return D.detach(dev, { log: function (t) { log(t); } }).then(function () {
+      log('Waiting for the board to come back in update mode…');
+      return waitDfu(b, 6000);
+    });
+  }
   function waitDfu(b, ms) {
     var until = Date.now() + ms;
     function again() {
@@ -497,15 +515,25 @@
     var touched = false;
     closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
       if (dev) { log('Found the board already in update mode (' + dev.productName + ').'); return dev; }
-      if (S.skipTouch || !b.run || (!DEMO && !navigator.serial)) return null;
-      return pickSerial(b).then(function (port) {
-        if (!port) { log('No running board picked; looking for one already in update mode.'); return null; }
-        log('Restarting the board into its bootloader (' + b.touchBaud + '-baud touch)…');
-        return FL.serial.touch(port, { baud: b.touchBaud }).then(function () {
-          touched = true;
-          if (DEMO) setTimeout(function () { demoBoard.running = false; }, 700);
-          log('Waiting for the board to come back in update mode…');
-          return waitDfu(b, 6000);
+      if (S.skipTouch) return null;
+      // A board running firmware that takes DFU detach (and this browser may already open it).
+      return findDetach(b).then(function (rt) {
+        if (rt) return detachThenWait(rt, b).then(function (d) { touched = true; return d; });
+        if (!b.run || (!DEMO && !navigator.serial)) return null;
+        return pickSerial(b).then(function (port) {
+          if (!port) {
+            log(detachIds(b).length
+              ? 'No serial port picked; the next list also offers the board running ' + detachIds(b).map(function (x) { return x.name || 'its other firmware'; }).join(' or ') + '.'
+              : 'No running board picked; looking for one already in update mode.');
+            return null;
+          }
+          log('Restarting the board into its bootloader (' + b.touchBaud + '-baud touch)…');
+          return FL.serial.touch(port, { baud: b.touchBaud }).then(function () {
+            touched = true;
+            if (DEMO) setTimeout(function () { demoBoard.running = false; }, 700);
+            log('Waiting for the board to come back in update mode…');
+            return waitDfu(b, 6000);
+          });
         });
       });
     }).then(function (dev) {
@@ -532,8 +560,17 @@
       if (demoBoard.running) return stopWith(Object.assign(new Error('No board in update mode was found.'), { code: 'none' }), c);
       return writeTo(demoDevice(), c);
     }
-    return navigator.usb.requestDevice({ filters: [{ vendorId: b.dfu.vid, productId: b.dfu.pid }] }).then(function (dev) {
-      S.run.waitPick = false; return writeTo(dev, c);
+    // The list also offers firmware that takes DFU detach, so a board running it can be picked here.
+    var filters = [{ vendorId: b.dfu.vid, productId: b.dfu.pid }].concat(detachIds(b).map(function (x) { return { vendorId: x.vid, productId: x.pid }; }));
+    return navigator.usb.requestDevice({ filters: filters }).then(function (dev) {
+      S.run.waitPick = false;
+      if (!isDetach(b, dev)) return writeTo(dev, c);
+      S.run.busy = true; upd();
+      return detachThenWait(dev, b).then(function (d) {
+        if (d) return writeTo(d, c);
+        // Not opened in this browser before: Chrome wants a click before it lists the bootloader.
+        return askForDfu(c, true, true);
+      });
     }, function (e) {
       if (e && e.name === 'SecurityError' && first) {
         // The browser wants a fresh click before it shows its list.

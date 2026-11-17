@@ -250,5 +250,55 @@
     return api;
   }
 
-  FL.fakeusb = { device: device, serialPort: serialPort, shell: shell };
+  /* Firmware with a DFU runtime interface (DFU 1.1 runtime mode, as candleLight has): interface 0 is its
+     own (vendor), interface 1 is class 0xFE / 1 / 1. DETACH sets .detached; with willDetach the device then
+     drops off the bus (calls after it fail), else it waits for reset().
+     opts: { willDetach (true), vanishOnDetach (false: reject the DETACH call itself), noRuntime, stallDetach,
+             vid (0x1D50), pid (0x606F), productName } */
+  function runtimeDevice(opts) {
+    opts = opts || {};
+    var will = opts.willDetach !== false;
+    var vendor = { interfaceNumber: 0, claimed: false, alternates: [{ alternateSetting: 0, interfaceClass: 0xFF, interfaceSubclass: 0, interfaceProtocol: 0 }] };
+    var rt = { interfaceNumber: 1, claimed: false, alternates: [{ alternateSetting: 0, interfaceClass: 0xFE, interfaceSubclass: 1, interfaceProtocol: 1 }] };
+    var itfs = opts.noRuntime ? [vendor] : [vendor, rt];
+    // A configuration descriptor holding the DFU functional descriptor (type 0x21).
+    var func = [9, 0x21, will ? 0x0B : 0x03, 0xFF, 0x00, 0x00, 0x08, 0x1A, 0x01];
+    var cfgDesc = [9, 2, 0, 0, itfs.length, 1, 0, 0x80, 50].concat(opts.noRuntime ? [] : func);
+    cfgDesc[2] = cfgDesc.length & 0xFF; cfgDesc[3] = cfgDesc.length >> 8;
+    var dev = {
+      vendorId: opts.vid || 0x1D50, productId: opts.pid || 0x606F, productName: opts.productName || 'Test gs_usb', serialNumber: 'RT0001',
+      opened: false, configuration: null, configurations: [{ configurationValue: 1, interfaces: itfs }],
+      log: [], detached: false, resets: 0, gone: false
+    };
+    function live() { return dev.gone ? Promise.reject(networkError('The device was disconnected.')) : Promise.resolve(); }
+    dev.open = function () { return live().then(function () { dev.opened = true; }); };
+    dev.close = function () { dev.opened = false; return Promise.resolve(); };
+    dev.selectConfiguration = function () { return live().then(function () { dev.configuration = dev.configurations[0]; }); };
+    dev.claimInterface = function (n) { return live().then(function () { itfs.forEach(function (i) { if (i.interfaceNumber === n) i.claimed = true; }); dev.log.push('claim ' + n); }); };
+    dev.releaseInterface = function () { return live(); };
+    dev.controlTransferIn = function (setup, length) {
+      return live().then(function () {
+        if (setup.requestType === 'standard' && setup.request === 6 && (setup.value >> 8) === 2) {
+          var b = new Uint8Array(cfgDesc.slice(0, length));
+          return { status: 'ok', data: new DataView(b.buffer) };
+        }
+        return { status: 'stall' };
+      });
+    };
+    dev.controlTransferOut = function (setup) {
+      return live().then(function () {
+        dev.log.push(setup.requestType + '/' + setup.recipient + ' req ' + setup.request + ' value ' + setup.value + ' index ' + setup.index);
+        if (setup.requestType !== 'class' || setup.recipient !== 'interface' || setup.request !== 0 || setup.index !== 1 || !rt.claimed) return { status: 'stall' };
+        if (opts.stallDetach) return { status: 'stall' };
+        dev.detached = true;
+        if (will) dev.gone = true;
+        if (opts.vanishOnDetach) throw networkError('The device was disconnected.');
+        return { status: 'ok', bytesWritten: 0 };
+      });
+    };
+    dev.reset = function () { dev.resets++; dev.gone = true; return Promise.resolve(); };
+    return dev;
+  }
+
+  FL.fakeusb = { device: device, runtimeDevice: runtimeDevice, serialPort: serialPort, shell: shell };
 })(window.FL = window.FL || {});

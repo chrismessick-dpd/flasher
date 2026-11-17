@@ -80,9 +80,12 @@
     // way. Kept apart from run, so a page that only knows run still reads the manifest.
     var run = usb(b.run);
     var runs = run ? [run].concat((Array.isArray(b.runAlso) ? b.runAlso : []).map(usb).filter(Boolean).slice(0, 7)) : [];
+    // detach: the USB ids of firmware with no serial port but a DFU runtime interface (candleLight,
+    // for one). Flasher restarts a board running it with DFU detach over WebUSB instead of the touch.
+    var detach = (Array.isArray(b.detach) ? b.detach : []).map(usb).filter(Boolean).slice(0, 4);
     return {
       id: id, name: str(b.name, 80) || id, mcu: str(b.mcu, 60), flash: flash, ram: ram, dfu: dfu,
-      run: run, runs: runs, touchBaud: run ? (num(b.touchBaud) || 1200) : 0,
+      run: run, runs: runs, touchBaud: run ? (num(b.touchBaud) || 1200) : 0, detach: detach,
       layout: str(b.layout, 200),                         // DfuSe layout if the browser can't read the device's
       manualDfu: Array.isArray(b.manualDfu) ? b.manualDfu.map(function (s) { return str(s, 300); }).filter(Boolean).slice(0, 8) : [],
       notes: str(b.notes, 1200)
