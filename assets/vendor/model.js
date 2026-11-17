@@ -2137,7 +2137,8 @@
   }
   function nextReworkRef(project) {
     var m = project && project.rework || {}, top = 0;
-    Object.keys(m).forEach(function (k) { var n = reworkNum(m[k] && m[k].ref); if (n !== Infinity && n > top) top = n; });
+    // After the highest live number (Chris, 2026-11-17): a deleted rework's number is free again.
+    Object.keys(m).forEach(function (k) { if (!m[k] || m[k].deleted) return; var n = reworkNum(m[k].ref); if (n !== Infinity && n > top) top = n; });
     return 'RW-' + ('00' + (top + 1)).slice(-3);
   }
   function newRework(project, fields, user) {
