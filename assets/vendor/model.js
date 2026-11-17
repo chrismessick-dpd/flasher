@@ -227,7 +227,7 @@
     var last = { updatedAt: '', updatedBy: '' };
     function see(rec) { if (rec && newer(last, rec) === rec) last = rec; }
     see(project.meta);
-    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec', 'tags'].forEach(function (k) {
+    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec', 'tags', 'rework'].forEach(function (k) {
       Object.keys(project[k] || {}).forEach(function (id) { see(project[k][id]); });
     });
     return last;
@@ -235,7 +235,7 @@
 
   // The records of a project edited after `since` (an ISO time; '' or missing: every record),
   // newest first, for the "unsynced changes" list. Read-only. Each entry:
-  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec' | 'tag',
+  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec' | 'tag' | 'rework',
   //     id, item (the check a comment or check record is about, '' if none),
   //     label (what it is), detail (its state or text), at, by, deleted }
   // Values come straight from the document (untrusted): callers escape them.
@@ -268,6 +268,7 @@
     each('revisions', function (r, id) { add('revision', r, id, '', 'Revision ' + cut(r.label, 40), oneOf(REV_STATUS, r.status, '')); });
     each('spec', function (r, id) { add('spec', r, id, '', cut(r.title, 120) || 'Untitled section', r.deleted ? '' : 'description'); });
     each('tags', function (r, id) { add('tag', r, id, '', '“' + cut(r.note, 120) + '”', r.deleted ? 'removed' : 'version ' + String(r.commit || '').slice(0, 7)); });
+    each('rework', function (r, id) { add('rework', r, id, '', ((typeof r.ref === 'string' ? r.ref + ' ' : '') + cut(r.title, 120)).trim() || 'Rework', r.deleted ? 'removed' : REWORK_LABEL[oneOf(REWORK_STATUS, r.status, 'planned')].toLowerCase()); });
     return out.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
   }
 
@@ -277,7 +278,7 @@
   // changesSince's shape plus before and after (the records themselves; before is null for a new one).
   // before null: every record of after is new (the file's first version). Rows are attributed by each
   // record's own stamp, never by who made the commit. Read-only; values are untrusted (escape them).
-  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec', tag: 'tags' };
+  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec', tag: 'tags', rework: 'rework' };
   function recordDiff(before, after, templates) {
     if (!after || !after.meta) return [];
     var key = function (r) { return r && typeof r === 'object' ? String(r.updatedAt || '') + '|' + String(r.updatedBy || '') : ''; };
@@ -322,7 +323,7 @@
   // tags stay as they are. Pure: returns { maps: { key: { id: record } }, meta: record or null, count }.
   // Applying the same to the review as it was before undoes it. opts.maps: the record maps to put back
   // (Signoff PL: nodes and reqs); a record added since in any map but items and sections is removed.
-  var RESTORE_MAPS = ['items', 'sections', 'custom', 'reqs', 'spec'];
+  var RESTORE_MAPS = ['items', 'sections', 'custom', 'reqs', 'spec', 'rework'];
   function restorePlan(live, older, user, opts) {
     var out = { maps: {}, meta: null, count: 0 }, key = specStampKey, same = function (a, b) { return stableStringify(a) === stableStringify(b); };
     var clone = function (x) { return JSON.parse(JSON.stringify(x)); };
@@ -416,6 +417,10 @@
     // summary.spec: the description's top-level gists and gaps (specSummary).
     var sp = specSummary(project);
     if (sp) out.spec = sp;
+    // summary.rework: counts of the bring-up reworks (Signoff PL shows the open ones). Left out while
+    // there are none, so other reviews keep their bytes.
+    var rw = reworkStats(project);
+    if (rw.total) out.rework = rw;
     return out;
   }
 
@@ -1801,6 +1806,8 @@
       spec: local.spec || remote.spec ? mergeSpec(local.spec || {}, remote.spec || {}, opts) : undefined,
       // Version tags (assets/history.js), records like any other; only once either copy has one.
       tags: local.tags || remote.tags ? mergeMaps(local.tags || {}, remote.tags || {}) : undefined,
+      // Bring-up reworks (reworkOn), records like any other; only once either copy has one.
+      rework: local.rework || remote.rework ? mergeMaps(local.rework || {}, remote.rework || {}) : undefined,
       // Derived (see projectSummary): carried along for writers that can't rebuild it.
       summary: local.summary && remote.summary && (local.summary.at || '') > (remote.summary.at || '') ? local.summary : remote.summary || local.summary
     };
@@ -2076,6 +2083,67 @@
     });
     return { projects: out, changed: changed };
   }
+
+  // ── Rework (Chris, 2026-11-16): bring-up reworks, beside the Bring-up checklist ──
+  // config.rework: { template } names the checklist whose tab gets a Checklist | Rework switch (Signoff
+  // EE: bringup; off in ME and FW). One record per rework in project.rework, merged like every other:
+  //   { id, ref: 'RW-001', title, problem, fix, parts, nets, status: planned | done | verified | notneeded,
+  //     next (fix it in the next revision), by (who did it), doneAt 'YYYY-MM-DD', revision (a revisions id),
+  //     pics: [{ id, file, type, w, h, sha256, name, at, by }], createdAt, updatedAt, updatedBy, deleted }
+  // Pictures are files in the review's repo, rework/<project id>/<rework id>/<file> (reworkPicPath),
+  // moved with the review when it's shared (Workspace.checkerDirs). Comments on a rework are ordinary
+  // comments with item = its id.
+  var REWORK_STATUS = ['planned', 'done', 'verified', 'notneeded'];
+  var REWORK_LABEL = { planned: 'Planned', done: 'Done', verified: 'Verified', notneeded: 'Not needed' };
+  var REWORK_PIC_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/svg+xml': 'svg' };
+  var PIC_ID = /^[a-z0-9]{1,24}$/;
+  function reworkOn(project) {
+    var t = C.rework && C.rework.template;
+    return !!(t && project && project.meta && (project.meta.checklists || []).indexOf(t) >= 0);
+  }
+  function cleanReworkPic(x) {
+    if (!x || typeof x !== 'object' || !PIC_ID.test(x.id || '') || !REWORK_PIC_TYPES[x.type]) return null;
+    var file = x.id + '.' + REWORK_PIC_TYPES[x.type];
+    if (x.file !== file) return null;
+    return { id: x.id, file: file, type: x.type, w: Math.max(0, Math.min(10000, Math.round(+x.w) || 0)), h: Math.max(0, Math.min(10000, Math.round(+x.h) || 0)),
+      sha256: hex(x.sha256, HEX64), name: clip(x.name, 200), at: isoTime(x.at), by: clip(x.by, 100) };
+  }
+  // A stored rework as it's safe to use: known enums, text cut to size, only well-formed pictures.
+  function cleanRework(r, key) {
+    r = r && typeof r === 'object' ? r : {};
+    return {
+      id: key, ref: clip(r.ref, 20), title: clip(r.title, 300), problem: clip(r.problem, 8000), fix: clip(r.fix, 8000),
+      parts: clip(r.parts, 1000), nets: clip(r.nets, 1000), status: oneOf(REWORK_STATUS, r.status, 'planned'), next: r.next === true,
+      by: clip(r.by, 100), doneAt: isoDay(r.doneAt), revision: RUN_ID.test(r.revision || '') ? r.revision : '',
+      pics: (Array.isArray(r.pics) ? r.pics : []).slice(0, 40).map(cleanReworkPic).filter(Boolean),
+      createdAt: isoTime(r.createdAt), updatedAt: isoTime(r.updatedAt), updatedBy: clip(r.updatedBy, 100)
+    };
+  }
+  function reworkNum(ref) { var m = /(\d+)\s*$/.exec(typeof ref === 'string' ? ref : ''); return m ? +m[1] : Infinity; }
+  // Live reworks, cleaned, by number (RW-002 before RW-010), then when they were added.
+  function liveRework(project) {
+    var m = project && project.rework || {};
+    return Object.keys(m).filter(function (k) { var x = m[k]; return x && typeof x === 'object' && !x.deleted; })
+      .map(function (k) { return cleanRework(m[k], k); })
+      .sort(function (a, b) { return (reworkNum(a.ref) - reworkNum(b.ref)) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); });
+  }
+  function nextReworkRef(project) {
+    var m = project && project.rework || {}, top = 0;
+    Object.keys(m).forEach(function (k) { var n = reworkNum(m[k] && m[k].ref); if (n !== Infinity && n > top) top = n; });
+    return 'RW-' + ('00' + (top + 1)).slice(-3);
+  }
+  function newRework(project, fields, user) {
+    var r = Object.assign({ id: uid('w'), ref: nextReworkRef(project), title: '', problem: '', fix: '', parts: '', nets: '',
+      status: 'planned', next: false, by: '', doneAt: '', revision: '', pics: [], createdAt: now() }, fields || {});
+    return stamp(r, user);
+  }
+  // Counts for the tab and summary.rework.
+  function reworkStats(project) {
+    var out = { total: 0, planned: 0, done: 0, verified: 0, notneeded: 0, next: 0 };
+    liveRework(project).forEach(function (r) { out.total++; out[r.status]++; if (r.next) out.next++; });
+    return out;
+  }
+  function reworkPicPath(projectId, reworkId, pic) { return 'rework/' + projectId + '/' + reworkId + '/' + pic.file; }
 
   // ── Revisions (docs/fabcheck-link.md, "Revisions") ────────
   // Tags on runs a checker stored with the review (Fabcheck's, for Signoff EE), in
@@ -2369,6 +2437,8 @@
     liveReqs: liveReqs, nextReqRef: nextReqRef, newReq: newReq, checkIndex: checkIndex, reqTrace: reqTrace, reqStats: reqStats,
     reqState: reqState, reqDiscipline: reqDiscipline, ownDiscipline: ownDiscipline, reqParent: reqParent, reqSummaryList: reqSummaryList,
     parseTable: parseTable, importReqs: importReqs, reqsCsv: reqsCsv,
+    REWORK_STATUS: REWORK_STATUS, REWORK_LABEL: REWORK_LABEL, REWORK_PIC_TYPES: REWORK_PIC_TYPES, reworkOn: reworkOn, cleanRework: cleanRework,
+    liveRework: liveRework, newRework: newRework, nextReworkRef: nextReworkRef, reworkStats: reworkStats, reworkPicPath: reworkPicPath,
     REV_STATUS: REV_STATUS, REV_STATUS_LABEL: REV_STATUS_LABEL, liveRevisions: liveRevisions, latestRevision: latestRevision,
     supersededBy: supersededBy, revisionForRun: revisionForRun, nextRevLabel: nextRevLabel, newRevision: newRevision,
     cleanRevision: cleanRevision, cleanRun: cleanRun, zipParts: zipParts, groupRuns: groupRuns, zipFolders: zipFolders

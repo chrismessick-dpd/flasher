@@ -1345,3 +1345,50 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .su.flash { animation: spec-su-flash 2.4s ease-out; }
 @keyframes spec-su-flash { 0%, 40% { background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); } 100% { background: transparent; box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { .su.flash { animation: none; background: var(--accent-soft); } }
+
+/* ── Rework (bring-up reworks beside the Bring-up checklist; app.js reworkPage) ──
+   Each status has its own glyph and outline, never hue alone: Planned is a dashed outline and an
+   open circle, Done a solid tint and one tick, Verified a solid outline and two ticks, Not needed
+   gray, lined through, and a dash. */
+.rw-switch { margin-bottom: 14px; }
+.rw-list { padding: 4px; }
+.rw-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; text-align: left; border: none; background: none; color: inherit; font: inherit; padding: 10px 12px; border-radius: var(--radius-sm); }
+.rw-row + .rw-row { box-shadow: 0 -1px 0 var(--hair); }
+.rw-row:hover { background: var(--bg-sunk); }
+.rw-row.sel { background: var(--accent-soft); }
+.rw-ref { font: 600 12.5px var(--mono); color: var(--text-2); }
+.rw-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.rw-title { font-size: 14px; font-weight: 500; line-height: 1.35; }
+.rw-is-notneeded .rw-title { text-decoration: line-through; color: var(--text-3); }
+.rw-sub { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; align-items: center; }
+.rw-parts { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+.rw-right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.rw-who { font-size: 11.5px; white-space: nowrap; }
+.rw-st { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 6px; white-space: nowrap; border: 1px solid transparent; }
+.rw-st svg, .rw-seg svg { width: 11px; height: 11px; }
+.rw-glyph { font-size: 11px; line-height: 1; letter-spacing: -2px; margin-right: 2px; }
+.rw-st.rw-planned { border: 1px dashed var(--text-3); color: var(--text-2); }
+.rw-st.rw-done { background: var(--accent-soft); color: var(--accent-ink); }
+.rw-st.rw-verified { background: var(--pass-soft); color: var(--pass); border-color: var(--pass); }
+.rw-st.rw-notneeded { background: var(--na-soft); color: var(--text-3); text-decoration: line-through; }
+.rw-seg button { gap: 4px; font-size: 12.5px; padding: 6px 4px; }
+.rw-next { display: flex; align-items: baseline; gap: 8px; font-size: 13px; margin: 2px 0 14px; flex-wrap: wrap; }
+.rw-next .muted { font-size: 11.5px; }
+.rw-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.rw-pics:empty { display: none; }
+.rw-thumb { position: relative; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-sunk); }
+.rw-thumb-img { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; border: none; padding: 0; background: none; font-size: 11px; cursor: zoom-in; }
+.rw-thumb-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rw-thumb-x { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); color: #fff; opacity: 0; padding: 0; }
+.rw-thumb-x svg { width: 10px; height: 10px; }
+.rw-thumb:hover .rw-thumb-x, .rw-thumb-x:focus-visible { opacity: 1; }
+@media (hover: none) { .rw-thumb-x { opacity: 1; } }
+.rw-thumb-up { display: flex; align-items: center; justify-content: center; font-size: 11px; text-align: center; padding: 6px; }
+.rw-drop { display: block; border: 1.5px dashed var(--hair-2); border-radius: var(--radius-sm); padding: 12px; text-align: center; font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.rw-drop:hover, .rw-drop.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.rw-big { display: flex; justify-content: center; background: var(--bg-sunk); border-radius: var(--radius-sm); margin: 12px 0 8px; }
+.rw-big img { max-width: 100%; max-height: 70vh; display: block; }
+@media (max-width: 600px) {
+  .rw-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .rw-ref { grid-column: 1 / -1; }
+}
