@@ -2089,7 +2089,10 @@
   // EE: bringup; off in ME and FW). One record per rework in project.rework, merged like every other:
   //   { id, ref: 'RW-001', title, problem, fix, parts, nets, status: planned | done | verified | notneeded,
   //     next (fix it in the next revision), by (who did it), doneAt 'YYYY-MM-DD', revision (a revisions id),
-  //     pics: [{ id, file, type, w, h, sha256, name, at, by }], createdAt, updatedAt, updatedBy, deleted }
+  //     pics: [{ id, file, type, w, h, sha256, name, at, by }],
+  //     steps: [{ id, text, pics }] (step-by-step instructions for the tech, each with its own pictures),
+  //     createdAt, updatedAt, updatedBy, deleted }
+  // `fix` is shown as Rework details; the print's Technician instructions use the steps, else `fix`.
   // Pictures are files in the review's repo, rework/<project id>/<rework id>/<file> (reworkPicPath),
   // moved with the review when it's shared (Workspace.checkerDirs). Comments on a rework are ordinary
   // comments with item = its id.
@@ -2108,6 +2111,10 @@
     return { id: x.id, file: file, type: x.type, w: Math.max(0, Math.min(10000, Math.round(+x.w) || 0)), h: Math.max(0, Math.min(10000, Math.round(+x.h) || 0)),
       sha256: hex(x.sha256, HEX64), name: clip(x.name, 200), at: isoTime(x.at), by: clip(x.by, 100) };
   }
+  function cleanReworkStep(x) {
+    if (!x || typeof x !== 'object' || !PIC_ID.test(x.id || '')) return null;
+    return { id: x.id, text: clip(x.text, 4000), pics: (Array.isArray(x.pics) ? x.pics : []).slice(0, 20).map(cleanReworkPic).filter(Boolean) };
+  }
   // A stored rework as it's safe to use: known enums, text cut to size, only well-formed pictures.
   function cleanRework(r, key) {
     r = r && typeof r === 'object' ? r : {};
@@ -2116,6 +2123,7 @@
       parts: clip(r.parts, 1000), nets: clip(r.nets, 1000), status: oneOf(REWORK_STATUS, r.status, 'planned'), next: r.next === true,
       by: clip(r.by, 100), doneAt: isoDay(r.doneAt), revision: RUN_ID.test(r.revision || '') ? r.revision : '',
       pics: (Array.isArray(r.pics) ? r.pics : []).slice(0, 40).map(cleanReworkPic).filter(Boolean),
+      steps: (Array.isArray(r.steps) ? r.steps : []).slice(0, 100).map(cleanReworkStep).filter(Boolean),
       createdAt: isoTime(r.createdAt), updatedAt: isoTime(r.updatedAt), updatedBy: clip(r.updatedBy, 100)
     };
   }
@@ -2134,7 +2142,7 @@
   }
   function newRework(project, fields, user) {
     var r = Object.assign({ id: uid('w'), ref: nextReworkRef(project), title: '', problem: '', fix: '', parts: '', nets: '',
-      status: 'planned', next: false, by: '', doneAt: '', revision: '', pics: [], createdAt: now() }, fields || {});
+      status: 'planned', next: false, by: '', doneAt: '', revision: '', pics: [], steps: [], createdAt: now() }, fields || {});
     return stamp(r, user);
   }
   // Counts for the tab and summary.rework.

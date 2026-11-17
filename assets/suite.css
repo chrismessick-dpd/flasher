@@ -1424,3 +1424,26 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
   #inspector.is-rework .rw-grip:hover::after, #inspector.rw-resizing .rw-grip::after { background: var(--accent); height: 72px; margin-top: -36px; }
   #inspector.rw-resizing { transition: none; user-select: none; }
 }
+
+/* Tech steps in the rework pane (app.js rwStepsHtml) and in the printout. */
+.rw-steps { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.rw-step { background: var(--bg-sunk); border-radius: var(--radius-sm); padding: 8px; }
+.rw-step-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.rw-step-n { font: 600 13px var(--mono); color: var(--accent-ink); padding-top: 7px; text-align: right; }
+.rw-step-text { resize: vertical; min-height: 44px; }
+.rw-step-acts { display: flex; flex-direction: column; gap: 2px; }
+.rw-step-acts .icon-btn { width: 24px; height: 22px; font-size: 13px; }
+.rw-step-acts .icon-btn svg { width: 10px; height: 10px; }
+.rw-step-acts .icon-btn:disabled { opacity: 0.3; }
+.rw-step .rw-pics { margin: 8px 0 0 30px; }
+.rw-drop.rw-drop-sm { margin: 6px 0 0 30px; padding: 6px; font-size: 11.5px; }
+.rwp-mode { flex: none; }
+.rwp-steps { margin: 4px 0 0; padding-left: 22px; }
+.rwp-steps > li { margin: 0 0 12px; padding-left: 4px; }
+.rwp-steps > li::marker { font-weight: 700; }
+.rwp-step-text { display: flex; gap: 8px; align-items: baseline; }
+.rwp-box { font-size: 14px; line-height: 1; }
+.rwp-steps .rwp-pics { margin-top: 8px; }
+.rwp-sign.rwp-sign-tech { grid-template-columns: 2fr 1fr; }
+@media print { .rwp-steps > li { break-inside: avoid; } }
+@media (max-width: 860px) { .report-bar { flex-wrap: wrap; gap: 8px; } }
