@@ -1392,3 +1392,25 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
   .rw-row { grid-template-columns: minmax(0, 1fr) auto; }
   .rw-ref { grid-column: 1 / -1; }
 }
+
+/* The rework printout (app.js drawReworkPrint), on the review report's paper. */
+.rwp-index { margin: 6px 0 8px; }
+.rwp-item { border-top: 2px solid #1d1d1f; margin-top: 26px; padding-top: 12px; }
+.rwp-head { display: flex; align-items: baseline; gap: 12px; break-after: avoid; }
+.rwp-head h2 { flex: 1; margin: 0; padding: 0; border: none; font-size: 17px; }
+.rwp-ref { font: 700 13px var(--mono); color: #004952; }
+.rwp-st { font-size: 11px; font-weight: 600; border: 1px solid #1d1d1f; border-radius: 4px; padding: 1px 8px; white-space: nowrap; }
+.rwp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin-top: 8px; }
+.rwp-field { margin-top: 10px; break-inside: avoid; }
+.rwp-field > span { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #86868b; margin-bottom: 2px; }
+.rwp-text { white-space: pre-wrap; line-height: 1.45; }
+.rwp-pics { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 14px; }
+.rwp-pic { margin: 0; break-inside: avoid; }
+.rwp-pic img { display: block; max-width: 100%; max-height: 150mm; margin: 0 auto; border: 1px solid #d2d2d7; border-radius: 4px; }
+.rwp-pic figcaption { font-size: 10.5px; color: #515154; text-align: center; margin-top: 4px; }
+.rwp-nopic { border: 1px dashed #c7c7cc; border-radius: 4px; padding: 30px; text-align: center; color: #86868b; }
+.rwp-sign { display: grid; grid-template-columns: 2fr 1fr 2fr 1fr; gap: 18px; margin-top: 30px; break-inside: avoid; }
+.rwp-sign div { border-top: 1px solid #1d1d1f; padding-top: 5px; font-size: 11px; color: #515154; }
+.rwp-notes { margin-top: 18px; min-height: 26mm; border: 1px solid #d2d2d7; border-radius: 4px; padding: 6px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #86868b; break-inside: avoid; }
+@media print { .rwp-item + .rwp-item { break-before: page; } }
+@media (max-width: 600px) { .rwp-grid { grid-template-columns: 1fr; } .rwp-sign { grid-template-columns: 1fr 1fr; } }
