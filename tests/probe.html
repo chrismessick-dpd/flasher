@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>Probe tests…</title>
+<style>body { font: 14px system-ui; margin: 24px; } .pass { color: #186a3b; } .fail { color: #b3261e; } pre { white-space: pre-wrap; }</style>
+</head>
+<body>
+<h1>Flasher probe tests</h1>
+<pre id="out"></pre>
+<script src="../assets/probe/files.js"></script>
+<script src="../assets/probe/stlink.js"></script>
+<script src="../assets/probe/jlink.js"></script>
+<script src="../assets/probe/target.js"></script>
+<script src="../assets/probe/stm32.js"></script>
+<script src="../assets/probe/svd.js"></script>
+<script src="../assets/probe/fakeprobe.js"></script>
+<script src="fakejlink.js"></script>
+<script src="probe_test.js"></script>
+</body>
+</html>

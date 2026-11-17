@@ -5,7 +5,7 @@
 import hashlib, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ["index.html"] + sorted(str(p.relative_to(ROOT)).replace("\\", "/")
+FILES = ["index.html", "probe.html"] + sorted(str(p.relative_to(ROOT)).replace("\\", "/")
                                 for p in (ROOT / "assets").rglob("*.*") if p.name != "version.js")
 h = hashlib.sha256()
 for f in FILES:

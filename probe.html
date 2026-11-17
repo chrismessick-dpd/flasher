@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Scripts and data only from this site. The probe is reached through the browser's own USB picker,
+     never without a click. No GitHub: this page reads and writes chips, not Flasher's repos. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Flasher · Probe</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23004952'/%3E%3Crect x='9' y='9' width='14' height='14' rx='2.5' fill='none' stroke='%23fff' stroke-width='2'/%3E%3Cpath d='M17 11.5l-3.5 5h4L15 20.5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/suite.css">
+<link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="assets/probe/probe.css">
+</head>
+<body>
+<div id="demo-banner" class="demo-banner" hidden></div>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <a class="brand-home" href="probe.html" title="Flasher probe">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M13.2 7l-3.7 5.5h5L10.8 17"/><path d="M8 1.5V4M16 1.5V4M8 20v2.5M16 20v2.5M1.5 8H4M1.5 16H4M20 8h2.5M20 16h2.5"/></svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">Flasher</div>
+          <div class="brand-sub">Debug probe</div>
+        </div>
+      </a>
+      <button class="icon-btn side-collapse" data-act="nav" title="Hide sidebar ( [ )" aria-label="Hide sidebar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2.5"/><path d="M7.5 3.5v13"/><path d="M13.5 8l-2 2 2 2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="side-head"><span class="side-label">Probe</span></div>
+    <nav class="side-list pb-nav" id="pb-nav" aria-label="Probe pages"></nav>
+    <div class="side-head"><span class="side-label">Flasher</span></div>
+    <a class="side-link" href="index.html" title="Back to Flasher's firmware list">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5L6.5 10l5.5 5.5"/></svg>
+      Firmware list
+    </a>
+    <div class="side-foot">
+      <div class="sync-pill pb-pill" id="pb-pill">
+        <span class="sync-dot" id="pb-dot"></span>
+        <span class="sync-text"><span class="sync-title" id="pb-title">No probe</span><span class="sync-sub" id="pb-sub">Connect an ST-LINK or J-Link</span></span>
+      </div>
+      <button class="icon-btn" data-act="theme" id="theme-btn" title="Dark mode" aria-label="Toggle dark mode"></button>
+    </div>
+  </aside>
+  <main class="main" id="main">
+    <header class="toolbar" id="toolbar">
+      <button class="icon-btn menu-toggle" data-act="nav" title="Show sidebar ( [ )" aria-label="Show sidebar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h14M3 10h14M3 14h14"/></svg>
+      </button>
+      <div class="toolbar-title" id="toolbar-title"></div>
+      <div class="toolbar-center"></div>
+      <div class="toolbar-actions" id="pb-actions"></div>
+    </header>
+    <div id="view"></div>
+  </main>
+</div>
+<div id="sheet-root"></div>
+<div class="toasts" id="toasts"></div>
+<input type="file" id="pb-file" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot" hidden>
+<input type="file" id="pb-svd" accept=".svd,.xml" hidden>
+<script src="assets/version.js"></script>
+<script src="assets/probe/files.js"></script>
+<script src="assets/probe/stlink.js"></script>
+<script src="assets/probe/jlink.js"></script>
+<script src="assets/probe/target.js"></script>
+<script src="assets/probe/stm32.js"></script>
+<script src="assets/probe/svd.js"></script>
+<script src="assets/probe/fakeprobe.js"></script>
+<script src="assets/probe/app.js"></script>
+</body>
+</html>

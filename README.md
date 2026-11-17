@@ -253,11 +253,58 @@ A GitHub Actions workflow can run the same script with `--push --ci` (allowed on
 and a repo secret holding a fine-grained token for Flasher's repos (Contents: read and write). Once a
 project is shared, its `review-flasher-*` repo must be among the token's repositories too.
 
+## Debug probe
+
+`probe.html` (**Debug probe** in the sidebar) is a programmer for an engineer's bench: an ST-LINK or J-Link
+in the browser, as a calmer STM32CubeProgrammer. It needs no sign-in and never talks to GitHub. Pages:
+
+- **Device:** the probe (firmware, target voltage), the chip (core, device ID, flash size and layout, unique
+  ID, protection), Halt, Run, Reset and halt, Reset and run, Hardware reset (NRST), and the core registers.
+- **Memory:** read any range, page through it as hex, save it as `.bin` or `.hex`; write one word to RAM or a
+  register.
+- **Erase & program:** open `.bin` (with a load address), `.hex`, `.elf`, or `.srec`; erase only the pages or
+  sectors the image covers (the default, so a bootloader elsewhere stays) or the whole flash; write, verify by
+  reading back, and reset into it. Erase a range, or the whole flash, on its own.
+- **Registers:** every peripheral register from ST's SVD (bundled for the G0B1 and H563; **Open an SVD file**
+  for any other chip), with fields decoded and editable, and Read and Write per register. Nothing is read
+  until asked, and registers whose read changes them are never read by Read all.
+- **Option bytes:** each fuse as a choice, a list of changes with warnings, and a typed confirmation. Never
+  written: RDP level 2, the H5's product state, boot entry, TrustZone, boot lock, and bank swap.
+- **Log:** everything done, with times.
+
+Connect holds NRST low while it attaches (**Under reset**, the default), so the application never runs and
+can't have turned off the SWD pins; NRST must be wired to the probe. Untick it to attach to a running chip
+without stopping or touching it.
+
+Chips: the STM32G0B1/G0C1 (two banks of 2 KB pages, double-word writes) and the STM32H562/H563/H573 (two banks
+of 8 KB sectors, quad-word writes; its core is on access port 1). The sequences follow ST's HAL. Another chip
+still connects for memory and registers. Writing a flash with its banks swapped, or with TrustZone on, is
+refused for now. After programming a G0 that was blank at power-on, Flasher clears its `FLASH_ACR.EMPTY` latch
+so the next reset boots the new image, not the ROM.
+
+Probes: the ST-LINK/V2, V2-1, and V3 (firmware V2J26 or later; V2J28 or V3 for the H5's access port 1), with
+ST's driver as installed. The J-Link speaks SWD bit by bit through SEGGER's raw I/O command, in batches with
+overrun detection so a WAIT never repeats or skips a write. It is experimental. Close STM32CubeProgrammer,
+CubeIDE, OpenOCD, or J-Link tools first: only one program can hold a probe.
+
+`probe.html?demo` (a G0B1) and `?demo=h5` (an H563) run against a simulated ST-LINK (`assets/probe/fakeprobe.js`).
+Findings behind the design: `docs/stlink-webusb.md`.
+
 ## Files
 
 | File | What |
 | --- | --- |
 | `index.html` | The page; CSP allows scripts from this site and `connect-src` to GitHub's API only |
+| `probe.html` | The debug probe page (above); CSP allows nothing outside this site |
+| `assets/probe/stlink.js` | ST-LINK commands over WebUSB (V2, V2-1, V3), per probe-rs |
+| `assets/probe/jlink.js` | J-Link commands over WebUSB and bit-level SWD |
+| `assets/probe/target.js` | Cortex-M: connect under reset or hot plug, halt, run, reset, core registers |
+| `assets/probe/stm32.js` | STM32 identify, flash erase, program, and verify, and option bytes, per family |
+| `assets/probe/files.js` | Programming files: read `.bin`, `.hex`, `.srec`, and ELF; write `.hex` |
+| `assets/probe/svd.js` | Register definitions: the bundled SVDs and any opened `.svd` file |
+| `assets/probe/svd/` | ST's SVDs for the G0B1 and H563, made compact by `tools/svd_to_json.py` (Apache-2.0) |
+| `assets/probe/fakeprobe.js` | A simulated ST-LINK/V3 with a G0B1 or H563 behind it (tests and `?demo`) |
+| `assets/probe/app.js`, `probe.css` | The probe page's UI |
 | `assets/dfuse.js` | DfuSe over WebUSB: layout and descriptor parsing, erase, write, read, and leave |
 | `assets/image.js` | Image checks, SHA-256, and manifest validation; the generic STM32 board for local files |
 | `assets/serial.js` | The 1200-baud touch, and the serial port under the console |
@@ -274,3 +321,5 @@ project is shared, its `review-flasher-*` repo must be among the token's reposit
 | `tools/stamp_version.py` | Stamps `assets/version.js` |
 | `tests/test.html` | Browser tests against the simulated bootloader and `tests/fakegithub.js`; the title becomes PASS or FAIL |
 | `tests/test_publish.py` | `python tests/test_publish.py` |
+| `tests/probe.html` | Probe tests against the simulated ST-LINK and `tests/fakejlink.js` (a J-Link with a bit-level SWD target) |
+| `tools/svd_to_json.py` | Turns an ST SVD into `assets/probe/svd/<NAME>.json.gz` |
