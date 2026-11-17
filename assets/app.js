@@ -377,7 +377,7 @@
     h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Put the board in update mode</div>' +
       (canTouch && !S.skipTouch
         ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.' +
-          (detachIds(b).length ? ' If the board runs <b>' + detachIds(b).map(function (x) { return esc(x.name || hex4(x.vid) + ':' + hex4(x.pid)); }).join('</b> or <b>') + '</b> instead, close that list: the next one offers it, and Flasher restarts it over USB.' : '') + '</div>'
+          (detachIds(b).length ? ' If the board runs <b>' + detachIds(b).map(function (x) { return esc(x.name || hex4(x.vid) + ':' + hex4(x.pid)); }).join('</b> or <b>') + '</b> instead, close that list, click <b>Pick…</b>, and choose it there: Flasher restarts it over USB.' : '') + '</div>'
         : '<div class="fl-step-sub">Press these on the board, then click <b>Flash board</b>:</div>' + buttonsHtml(b)) +
       (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board isn’t running firmware (new, blank, or stuck)</label>' : '') +
       '</div></li>';
@@ -392,7 +392,7 @@
     if (run && run.ok) h += '<div class="hint fl-good"><b>Done</b>' + esc(c.fw.name) + ' is on the board and running (' + esc(I.fmtBytes(run.bytes)) + ', ' + run.pages + ' pages, verified) in ' + (run.ms / 1000).toFixed(1) + ' s.</div>';
     h += '<div class="fl-row">';
     var blocked = (chk && chk.errors.length) || (!DEMO && !navigator.usb) || !S.bytesReady;
-    if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">Pick ' + esc(b.dfu.name || 'DFU in FS Mode') + '</button>';
+    if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">' + esc(pickLabel(b)) + '</button>';
     else h += '<button class="btn btn-primary" data-act="flash"' + (busy || blocked ? ' disabled' : '') + '>' + (busy ? 'Flashing…' : run && run.ok ? 'Flash again' : 'Flash board') + '</button>';
     if (run && run.ok && b.run && (DEMO || navigator.serial)) h += '<button class="btn" data-act="console">Open console</button>';
     if (!S.bytesReady && !S.bytesError) h += '<span class="fl-muted">Fetching the image…</span>';
@@ -471,6 +471,12 @@
       return list.filter(function (d) { return isDetach(b, d); })[0] || null;
     });
   }
+  // The Pick button's words: the bootloader, and before a detach, the firmware that takes one.
+  function pickLabel(b) {
+    var names = [b.dfu.name || 'DFU in FS Mode'];
+    if (!(S.run && S.run.detached)) names = names.concat(detachIds(b).map(function (x) { return x.name || hex4(x.vid) + ':' + hex4(x.pid); }));
+    return 'Pick ' + names.join(' or ');
+  }
   function detachThenWait(dev, b) {
     log('Found the board running ' + (dev.productName || 'firmware without a serial port') + '.');
     return D.detach(dev, { log: function (t) { log(t); } }).then(function () {
@@ -523,7 +529,7 @@
         return pickSerial(b).then(function (port) {
           if (!port) {
             log(detachIds(b).length
-              ? 'No serial port picked; the next list also offers the board running ' + detachIds(b).map(function (x) { return x.name || 'its other firmware'; }).join(' or ') + '.'
+              ? 'No serial port picked; the next list also offers the board running ' + detachIds(b).map(function (x) { return x.name || 'its other firmware'; }).join(' or ') + ' (click Pick… if Chrome doesn’t show it).'
               : 'No running board picked; looking for one already in update mode.');
             return null;
           }
@@ -567,15 +573,18 @@
       if (!isDetach(b, dev)) return writeTo(dev, c);
       S.run.busy = true; upd();
       return detachThenWait(dev, b).then(function (d) {
+        S.run.detached = true;
         if (d) return writeTo(d, c);
         // Not opened in this browser before: Chrome wants a click before it lists the bootloader.
         return askForDfu(c, true, true);
       });
     }, function (e) {
-      if (e && e.name === 'SecurityError' && first) {
-        // The browser wants a fresh click before it shows its list.
+      // On the automatic first ask, Chrome may refuse to show its list without a fresh click: with a
+      // SecurityError, or, right after another list closed (the serial one), with a NotFoundError.
+      // Either way offer the Pick button; only a list opened from that button and closed is "none".
+      if (e && (e.name === 'SecurityError' || e.name === 'NotFoundError') && first) {
         S.run.busy = false; S.run.waitPick = true;
-        var pick = '“Pick ' + (b.dfu.name || 'DFU in FS Mode') + '”';
+        var pick = '“' + pickLabel(b) + '”';
         log(touched
           ? 'The board was asked to restart into update mode. Click ' + pick + ' and choose it. If Chrome’s list is empty, the board didn’t come back: press its reset button and flash again.'
           : 'Click ' + pick + ' and choose the board in update mode.');
