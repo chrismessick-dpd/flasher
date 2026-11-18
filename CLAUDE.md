@@ -94,7 +94,7 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   compare progress now names each block, `index`/`differs`, and `checked` follows each read-back). `probe.html`
   redirects to the tab. The probe's Erase & program draws the same route (this computer → the probe → the chip,
   `progRoute`; `setRun` takes the pass and its fraction). Then (Chris): home is the banner and the empty flash tool
-  (`emptyToolHtml`), no firmware cards; the probe tab has the bootloader's layout, nothing under the top bar (the
+  (`emptyToolHtml`), no firmware cards; the probe tab has the bootloader's layout (pushed `af98be2`), nothing under the top bar (the
   page's heading, the connection card `.pb-conn`, and one panel `.pb-panel` whose tabs are its pages). Tests: 62 browser, 36 probe, 24 Python. Tried in `?demo` (direct, bridge, file with
   and without an answer, console pause, probe programming the picked firmware), light, dark, and 375 px. Not
   tried on hardware.
