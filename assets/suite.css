@@ -821,6 +821,13 @@ button.fab-rev { border: none; margin-left: 6px; cursor: pointer; background: va
 .rev-older .rev-acts { margin-top: 8px; }
 @media (max-width: 860px) { .rev-body { padding-left: 18px; } }
 
+/* Releases (config.releases, Signoff FW): states read as words; withdrawn is also struck through, a draft dashed */
+.rel-chip.draft { background: transparent; color: var(--text-2); border: 1px dashed var(--text-3); }
+.rel-chip.released { background: var(--accent-soft); color: var(--accent-ink); }
+.rel-chip.withdrawn { background: var(--na-soft); color: var(--text-3); text-decoration: line-through; }
+.rel-version.withdrawn { text-decoration: line-through; color: var(--text-3); }
+.rel-check { display: flex; align-items: baseline; gap: 8px; font-size: 13px; margin: 2px 0 12px; }
+
 /* ── Collapsible sidebar ── */
 .brand-text { flex: 1; min-width: 0; }
 .side-collapse { margin-right: -6px; }

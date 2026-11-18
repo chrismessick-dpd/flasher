@@ -47,7 +47,9 @@
     tab: (/[?&]tab=(probe|console)\b/.exec(location.search) || [])[1] || 'serial',
     run: null,                         // the flash in progress or last finished, for the current firmware
     con: null,                         // { open, connecting, error, name, paused }
-    conBaud: 115200, conFilter: ''     // the console's rate, and which board's ports to list ('' = any)
+    conBaud: 115200, conFilter: '',    // the console's rate, and which board's ports to list ('' = any)
+    fwr: null,                         // Signoff FW releases (assets/fwreleases.js): { state, targets, errors, fte, error }
+    relKey: '', rel: null              // view 'release': '<review id>/<release id>', and its fetch { busy, error }
   };
   var demoBoard = { running: true };   // the simulated board's state in ?demo
 
@@ -102,9 +104,10 @@
 
   function load() {
     S.error = ''; S.syncError = '';
-    if (DEMO) { S.loading = true; render(); return C.loadDemo().then(done, fail); }
+    if (DEMO) { S.loading = true; render(); return C.loadDemo().then(function (c) { done(c); return loadFwr(c); }, fail); }
     var tok = C.auth.token();
-    if (!tok) { S.catalog = null; S.loading = false; S.syncing = false; render(); return Promise.resolve(); }
+    if (!tok) { S.catalog = null; S.fwr = null; S.loading = false; S.syncing = false; render(); return Promise.resolve(); }
+    loadFwr(null);   // Signoff FW's releases: their own repos and access, read beside the manifest
     // Another account (signed in here or in another tab) never sees the last one's list.
     if (S.catalog && S.catalogTag !== tagOf(tok)) { S.catalog = null; S.syncedAt = 0; S.check = null; S.bytesReady = false; bytesFor = null; }
     if (S.syncing) return S.syncing;
@@ -132,8 +135,123 @@
     function fail(e) {
       if (S.catalog && !DEMO && e.code !== 'none' && e.code !== 'invited') { S.syncError = e.message || String(e); S.loading = false; render(); return; }
       if (e.code === 'none' || e.code === 'invited') forgetKept();
-      S.catalog = e.catalog || null; S.invites = e.invites || []; S.loading = false; S.error = e.message || String(e); render();
+      S.catalog = e.catalog || null; S.invites = e.invites || []; S.loading = false; S.error = e.message || String(e); S.errorCode = e.code || ''; render();
     }
+  }
+
+  // ── Signoff FW releases (assets/fwreleases.js; ../fw_design_review/docs/releases.md) ──
+  // FW sharing decides who sees them: the targets this token's FW repos hold. Drafts show to FTEs only.
+  var fwrLoading = null;
+  function loadFwr(demoCatalog) {
+    if (fwrLoading) return fwrLoading;
+    var tok = C.auth.token(), tag = tagOf(tok);
+    if (!DEMO && !tok) { S.fwr = null; return Promise.resolve(); }
+    if (S.fwr && S.fwr.tag !== (DEMO ? 'demo' : tag)) S.fwr = null;   // another account's list is never shown
+    if (!S.fwr) S.fwr = { state: 'loading', targets: [], errors: [] };
+    fwrLoading = (DEMO ? FL.fwr.loadDemo(demoCatalog) : FL.fwr.load({ token: tok })).then(function (r) {
+      if (!DEMO && tagOf(C.auth.token()) !== tag) return;
+      S.fwr = Object.assign(r, { state: 'ok', tag: DEMO ? 'demo' : tag });
+      openWantedRelease();
+    }, function (e) {
+      S.fwr = { state: 'error', error: e.message || String(e), targets: [], errors: [], tag: tag };
+    }).then(function () { fwrLoading = null; render(); });
+    return fwrLoading;
+  }
+  function fwrFte() { return DEMO || !!(S.fwr && S.fwr.fte) || !!(S.catalog && S.catalog.fte); }
+  function relShown(r) { return r.state !== 'draft' || fwrFte(); }
+  function relOf(key) {
+    var m = /^([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(key || ''), out = null;
+    if (!m || !S.fwr || !S.fwr.targets) return null;
+    S.fwr.targets.forEach(function (t) {
+      if (t.id !== m[1]) return;
+      t.releases.forEach(function (r) { if (r.id === m[2] && relShown(r)) out = { target: t, rel: r, key: key }; });
+    });
+    return out;
+  }
+  function relLabel(x) { return x.target.name + ' ' + x.rel.version; }
+  function relState(r) {
+    return '<span class="chip fl-rel-' + r.state + '">' + esc(FL.fwr.LABEL[r.state]) + '</span>';
+  }
+  function fetchRel(x) {
+    return S.fwr.demo ? S.fwr.fetch(x.target, x.rel) : FL.fwr.fetchRelease(x.target, x.rel, { token: C.auth.token() });
+  }
+  // ?release=<review id>/<release id> (Signoff FW's Open in Flasher) opens one, once the releases are read.
+  var wantRel = (/[?&]release=([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)/.exec(location.search) || [])[1] || '';
+  function openWantedRelease() {
+    var k = wantRel; wantRel = '';
+    if (!k) return;
+    if (relOf(k)) openRelease(k);
+    else toast('That release isn’t one you can open here: it may be a draft, or not shared with you.');
+  }
+  // A release over USB is fetched, checked, and opened as a file for its board; a passthrough one waits for a
+  // system to put it on (its page lists them).
+  function openRelease(key) {
+    var x = relOf(key);
+    if (!x) return;
+    if (S.run && S.run.busy) return toast('Wait for the flash to finish.');
+    S.relKey = key; S.rel = null;
+    if (x.rel.via === 'passthrough') { select('release'); return; }
+    S.rel = { busy: true, error: '' }; select('release');
+    fetchRel(x).then(function (f) {
+      if (S.relKey !== key || S.view !== 'release') return;
+      S.rel = null;
+      openLocalBytes(f.name, f.bytes, f.sha256, boards()[f.load.board] ? f.load.board : '', { key: key, target: x.target.name, version: x.rel.version, state: x.rel.state, withdrawnWhy: x.rel.withdrawnWhy || '', base: f.load.base });
+    }, function (e) { if (S.relKey === key) { S.rel = { busy: false, error: e.message || String(e) }; render(); } });
+  }
+  function fwrRows() {
+    var f = S.fwr;
+    if (!f || (f.state === 'ok' && !f.targets.length)) return '';
+    if (f.state === 'loading') return '<div class="side-empty">Reading Signoff FW releases…</div>';
+    if (f.state === 'error') return '<div class="side-empty">Couldn’t read Signoff FW releases: ' + esc(f.error) + '</div>';
+    var q = ($('#fw-search').value || '').trim().toLowerCase(), closed = closedGroups(), curKey = S.view === 'release' ? S.relKey : S.view === 'local' && S.local && S.local.release ? S.local.release.key : '';
+    return f.targets.map(function (t) {
+      var list = t.releases.filter(relShown).filter(function (r) { return !q || (t.name + ' ' + r.version).toLowerCase().indexOf(q) >= 0; }).slice().reverse();
+      if (!list.length) return '';
+      var gid = 'fwr:' + t.id, holds = list.some(function (r) { return curKey === t.id + '/' + r.id; }), open = !closed[gid] || !!q || holds;
+      return '<div class="side-group"><button class="side-group-head" data-act="toggle-group" data-group="' + esc(gid) + '" aria-expanded="' + open + '">' +
+        '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        '<span class="side-group-name" title="Releases from Signoff FW">' + esc(t.name) + ' <span class="fl-muted">· Signoff FW</span></span><span class="side-group-count">' + list.length + '</span></button>' +
+        (open ? list.map(function (r) {
+          var key = t.id + '/' + r.id, sub = [FL.fwr.LABEL[r.state], r.via === 'passthrough' ? 'through a passthrough' : r.kind.toUpperCase(), I.fmtBytes(r.size)].join(' · ');
+          return '<button class="proj fl-rel-row ' + r.state + (curKey === key ? ' active' : '') + '" data-act="open-rel" data-rel="' + esc(key) + '" title="' + esc(t.name + ' ' + r.version + (r.withdrawnWhy ? ': withdrawn, ' + r.withdrawnWhy : '')) + '">' + FW_ICON +
+            '<span class="proj-body"><span class="proj-name">' + esc(r.version) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+        }).join('') : '') + '</div>';
+    }).join('');
+  }
+  // The banner over a release's page, or over the file it opened as: where it's from, its state, and why it
+  // was withdrawn.
+  function relBanner(x) {
+    var st = x.state || x.rel.state, why = x.withdrawnWhy || (x.rel && x.rel.withdrawnWhy) || '';
+    return (st === 'withdrawn' ? '<div class="hint fl-warn"><b>▲ Withdrawn</b>' + esc(why || 'This release was withdrawn.') + ' Flash it only if you mean to.</div>' : '') +
+      (st === 'draft' ? '<div class="hint"><b>Draft</b>Not released yet: for the bench. Only FTEs see it.</div>' : '');
+  }
+  function releaseHtml() {
+    var x = relOf(S.relKey);
+    if (!x) return homeHtml();
+    var t = x.target, r = x.rel;
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Signoff FW · ' + esc(t.name) + '</div>' +
+      '<h1 class="page-title">' + esc(t.name + ' ' + r.version) + '</h1><div class="page-sub"><span class="chips">' + relState(r) +
+      '<span class="chip">' + esc(r.kind.toUpperCase() + ' · ' + I.fmtBytes(r.size)) + '</span>' +
+      '<span class="chip">' + esc(r.via === 'passthrough' ? 'Through a passthrough' + (r.board ? ' · ' + r.board : '') : 'Its own USB' + (r.board ? ' · ' + r.board : '')) + '</span>' +
+      (r.releasedAt ? '<span class="chip">Released ' + esc(r.releasedAt) + '</span>' : '') +
+      '<span class="chip fl-mono" title="SHA-256 ' + esc(r.sha256) + '">' + esc(r.sha256.slice(0, 12)) + '</span></span></div></div>' +
+      (S.fwr.demo ? '' : '<div class="fl-row fl-head-acts"><a class="btn btn-plain" href="' + esc(FL.fwr.reviewUrl(t, r)) + '">Open in Signoff FW</a></div>') + '</div>';
+    h += relBanner(x);
+    if (r.via !== 'passthrough') {
+      h += S.rel && S.rel.error ? '<div class="hint fl-bad"><b>Couldn’t get the release</b>' + esc(S.rel.error) + '<div class="fl-row"><button class="btn btn-primary" data-act="open-rel" data-rel="' + esc(S.relKey) + '">Try again</button></div></div>'
+        : '<div class="hint"><b>Getting the release</b>Reading ' + esc(r.kind.toUpperCase()) + ' from ' + esc(t.repo) + ' and checking its SHA-256…</div>';
+      return h + '</div>';
+    }
+    // A passthrough release goes on a system's remote: pick one, or start one.
+    var list = systemsOn() ? readSystems() : [];
+    h += '<div class="card fl-pad"><h3 class="fl-sys-edit-title">Put it on a passthrough system</h3>' +
+      '<p class="note">This build reaches its board through another board’s passthrough. Pick the system whose remote it’s for' + (r.board ? ' (the bootloader there should answer “' + esc(r.board) + '”)' : '') + '; the system keeps this release until you switch it.</p>' +
+      (systemsOn() ? '<div class="fl-rel-systems">' + list.map(function (sys) {
+        var cur = sys.remote && sys.remote.release ? sys.remote.release.version + ' from Signoff FW' : sys.remote && sys.remote.file ? sys.remote.file.name : 'No file yet';
+        return '<button class="btn" data-act="rel-to-sys" data-sys="' + esc(sys.id) + '">' + esc(sys.name) + ' <span class="fl-muted">· now ' + esc(cur) + '</span></button>';
+      }).join('') + '<button class="btn btn-primary" data-act="rel-to-sys" data-sys="">New passthrough system</button></div>'
+        : '<p class="note">Passthrough systems are for FTEs for now.</p>') + '</div>';
+    return h + '</div>';
   }
 
   // ?fw=<board>/<id> opens one firmware. Read once at start: renders while loading rewrite the address.
@@ -147,6 +265,8 @@
     if (DEMO) q.push(DEMO_PROBE === 'h5' ? 'demo=h5' : 'demo');
     if (S.tab !== 'serial') q.push('tab=' + S.tab);
     if (c && !c.fw.local) q.push('fw=' + c.fw.board + '/' + c.fw.id);
+    var rk = S.view === 'release' ? S.relKey : S.view === 'local' && S.local && S.local.release ? S.local.release.key : wantRel;
+    if (rk) q.push('release=' + rk);
     try { history.replaceState(null, '', location.pathname + (q.length ? '?' + q.join('&') : '')); } catch (e) { /* file:// */ }
   }
 
@@ -160,7 +280,8 @@
     if (S.view === 'people' && !S.loading && !(S.catalog && S.catalog.fte)) S.view = 'home';
     renderTabs();
     if (S.loading && linked) return;   // keep ?fw= in the address until the list is here
-    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : S.view === 'system' ? systemHtml(current()) : fwHtml(current());
+    if (S.view === 'release' && !relOf(S.relKey) && !(S.fwr && S.fwr.state === 'loading')) S.view = 'home';
+    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : S.view === 'system' ? systemHtml(current()) : S.view === 'release' ? releaseHtml() : fwHtml(current());
     if (S.tab === 'console') renderConsole();
     // The probe draws itself; it's redrawn here only when its tab opens, so a sync or a fetch finishing
     // never wipes what's typed in its fields.
@@ -239,7 +360,7 @@
       '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
       '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
       esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, .hex, or .elf; or drop it here') + '</span></span></button>';
-    list.innerHTML = fileRow + systemRows() + h;
+    list.innerHTML = fileRow + systemRows() + h + fwrRows();
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
   }
@@ -328,6 +449,8 @@
       h += '<div class="hint fl-signin"><b>Projects’ firmware is private</b>Sign in with the GitHub access you use for Signoff to see the projects shared with you. A file from this computer, the Debug probe, and the Console work without it.' +
         '<div class="fl-row">' + (ghAuth() ? '<button class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button><button class="btn" data-act="account">Use a token…</button>'
           : '<button class="btn btn-primary" data-act="account">Sign in…</button>') + '<a class="fl-demo-link" href="?demo">Or try the demo</a></div></div>';
+    } else if (S.error && S.errorCode === 'none' && S.fwr && S.fwr.targets && S.fwr.targets.length) {
+      h += '<div class="hint"><b>Releases from Signoff FW</b>The firmware targets shared with you in Signoff FW are in the list on the left.</div>';
     } else if (S.error) {
       if (S.invites && S.invites.length) {
         h += '<div class="hint fl-warn"><b>An invitation is waiting</b>' + esc(S.error) + '<div class="fl-row">' +
@@ -374,6 +497,10 @@
       (fw.source && fw.source.dirty ? '<span class="chip fl-chip-warn" title="The checkout it was built from had uncommitted changes">Uncommitted changes</span>' : '') +
       '<span class="chip fl-mono" title="SHA-256 ' + esc(fw.sha256) + '">' + esc(fw.sha256.slice(0, 12)) + '</span></span></div></div></div>';
     h += browserNote();
+    if (fw.local && S.local && S.local.release) {
+      var lr = S.local.release;
+      h += '<div class="hint"><b>From Signoff FW</b>' + esc(lr.target + ' ' + lr.version) + ', ' + esc(FL.fwr.LABEL[lr.state].toLowerCase()) + '. Its SHA-256 was checked when it was read.</div>' + relBanner(lr);
+    }
     if (fw.local) {
       // Every board, those reached through another board's passthrough too (a .hex or .elf is split into its blocks).
       var opts = Object.keys(boards()).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + (boards()[id].kind === 'bridge' ? ' (through its passthrough)' : '') + '</option>'; }).join('');
@@ -991,6 +1118,11 @@
           if (b.system) learnPassthrough(port, info, run.hostInfo);
         },
         split: c.fw.split ? function (info) {
+          // A Signoff FW release names the board it's for; a bootloader that names another stops here, before
+          // anything is compared or written. An older bootloader names none: it's said, and the update goes on.
+          var want = c.fw.wantBoard;
+          if (want && info.board && info.board !== want) throw new Error('The board answered as “' + info.board + '”, and ' + c.fw.name + ' is for “' + want + '”. Nothing was written.');
+          if (want && !info.board) log('Its bootloader doesn’t say which board it is, so Flasher can’t check that ' + c.fw.name + ' (for “' + want + '”) fits it.');
           var lay = I.layoutFromInfo(info);
           log('Its flash, from the bootloader: ' + lay.chip + ', application ' + I.hex(info.appBase) + ' to ' + I.hex(info.appEnd) +
             (info.qspiSize ? ', external flash ' + I.fmtBytes(info.qspiSize) + ' in ' + I.fmtBytes(lay.regions[1].unit) + ' blocks' + (lay.qspiBlockGuessed ? ' (its block size assumed: this bootloader doesn’t report it)' : '') : '') +
@@ -1133,6 +1265,7 @@
     if (S.sys.loading) idbFile('get', sys.id).then(function (rec) {
       if (!S.sys || S.sys.sys.id !== sys.id) return;
       S.sys.loading = false;
+      if (S.sys.file) return render();   // a release or file put on it meanwhile wins
       if (rec && rec.bytes) return parseSystemFile(rec.name, new Uint8Array(rec.bytes)).then(function (f) { if (S.sys && S.sys.sys.id === sys.id) { S.sys.file = f; render(); } }, function () { render(); });
       render();
     });
@@ -1178,15 +1311,52 @@
     if (!f || !S.sys) return;
     if (S.run && S.run.busy) return toast('Wait for the update to finish.');
     if (f.size > 64 * 1048576) return toast('That file is over 64 MB; it isn’t firmware for these boards.');
-    var sys = S.sys.sys;
-    f.arrayBuffer().then(function (buf) { return parseSystemFile(f.name, new Uint8Array(buf)); }).then(function (file) {
+    f.arrayBuffer().then(function (buf) { setSystemBytes(f.name, new Uint8Array(buf), null); });
+  }
+  /* The remote's firmware: a file's bytes, or a Signoff FW release's (release: { repo, review, release, version,
+     sha256, board }, kept on the system as its reference; a file picked later replaces it). */
+  function setSystemBytes(name, bytes, release) {
+    var sys = S.sys && S.sys.sys;
+    if (!sys) return Promise.resolve();
+    return parseSystemFile(name, bytes).then(function (file) {
       if (!S.sys || S.sys.sys !== sys) return;
+      if (release && file.sha256 !== release.sha256) throw new Error('The release’s bytes don’t match its SHA-256.');
       S.sys.file = file; S.sys.units = null; S.run = null;
       sys.remote.file = { name: file.name, sha256: file.sha256, size: file.bytes.length };
-      if (!sys.remote.name) sys.remote.name = file.name.replace(/\.[^.]+$/, '');
+      if (release) sys.remote.release = release; else delete sys.remote.release;
+      if (!sys.remote.name) sys.remote.name = release ? release.target : file.name.replace(/\.[^.]+$/, '');
       idbFile('put', sys.id, { name: file.name, bytes: file.bytes }).then(function (ok) { if (!ok) toast('This browser won’t keep the file; open it again next visit.'); });
       systemChanged();
-    }, function (e) { toast(f.name + ': ' + (e.message || e)); });
+    }).catch(function (e) { toast(name + ': ' + (e.message || e)); });
+  }
+  /* Put a Signoff FW release on a system's remote (sysId '' for a new system): read it, check it, keep the reference. */
+  function releaseToSystem(key, sysId) {
+    var x = relOf(key);
+    if (!x || x.rel.via !== 'passthrough') return;
+    if (S.run && S.run.busy) return toast('Wait for the update to finish.');
+    toast('Getting ' + relLabel(x) + '…');
+    fetchRel(x).then(function (f) {
+      openSystem(sysId || null);
+      if (!S.sys) return;
+      S.sys.block = 'remote';
+      return setSystemBytes(f.name, f.bytes, { repo: x.target.repo, review: x.target.id, release: x.rel.id, version: x.rel.version, target: x.target.name, sha256: x.rel.sha256, board: x.rel.board })
+        .then(function () { toast('The remote now has ' + relLabel(x)); });
+    }, function (e) { toast('Couldn’t get ' + relLabel(x) + ': ' + (e.message || e)); });
+  }
+  /* The release a system's remote names, from the list this token reads now (null if it's gone or hidden). */
+  function sysRelease(sys) {
+    var r = sys && sys.remote && sys.remote.release;
+    return r ? relOf(r.review + '/' + r.release) : null;
+  }
+  // The passthrough releases a remote can take: Released ones (and drafts for FTEs), newest first.
+  function remoteReleaseOptions() {
+    var out = [];
+    ((S.fwr && S.fwr.targets) || []).forEach(function (t) {
+      t.releases.slice().reverse().forEach(function (r) {
+        if (r.via === 'passthrough' && relShown(r) && r.state !== 'withdrawn') out.push({ key: t.id + '/' + r.id, label: t.name + ' ' + r.version + (r.state === 'draft' ? ' (draft)' : '') + (r.board ? ' · ' + r.board : '') });
+      });
+    });
+    return out;
   }
   /* ?demo: the display's firmware lives in a ready-made passthrough system (Chris, 2026-11-17), not the list: the Main
      PCBA as the host, the Display & Sensor Board as the remote, and its 1.4.0 build. Made once per browser; removing
@@ -1231,7 +1401,7 @@
     };
   }
   function systemFw() {
-    var f = S.sys.file, fw = { id: 'system', local: true, kind: 'units', split: true, name: f ? f.name : 'No file yet', size: f ? f.size : 0, sha256: f ? f.sha256 : '', segments: f ? f.segments : null, units: S.sys.units || [], parts: [] };
+    var f = S.sys.file, rr = S.sys.sys.remote.release, fw = { id: 'system', local: true, kind: 'units', split: true, wantBoard: rr && rr.board || '', name: f ? f.name : 'No file yet', size: f ? f.size : 0, sha256: f ? f.sha256 : '', segments: f ? f.segments : null, units: S.sys.units || [], parts: [] };
     if (!f) fw.error = S.sys.loading ? 'Reading the file kept in this browser…' : 'Open the remote’s .hex or .elf first.';
     return fw;
   }
@@ -1248,7 +1418,7 @@
         '<span class="fl-sys-kick">' + IC[icon] + esc(kicker) + '</span><span class="fl-sys-name">' + esc(name) + '</span><span class="fl-sys-sub">' + esc(sub) + '</span>' + stat(node) + '</button>';
     }
     var hostSub = (sys.host.usb || []).length ? 'USB ' + sys.host.usb.map(hexId).join(', ') : 'Any port you pick',
-      remSub = f ? f.name + ' · ' + I.fmtBytes(f.size) : S.sys.loading ? 'Reading its file…' : 'No .hex or .elf yet';
+      remSub = f ? (sys.remote.release ? sys.remote.release.version + ' from Signoff FW · ' : '') + f.name + ' · ' + I.fmtBytes(f.size) : S.sys.loading ? 'Reading its file…' : 'No .hex or .elf yet';
     if (sys.remote.seen && sys.remote.seen.chip) remSub += ' · ' + sys.remote.seen.chip;
     var h = '<div class="fl-sys">' + (m.note ? '<div class="fl-route-note">' + esc(m.note) + '</div>' : '') + '<div class="fl-sys-chain">' +
       '<div class="fl-sys-pc' + (pcNode.on ? ' on' : '') + '"><span class="fl-sys-kick">' + IC.pc + 'This computer</span>' + stat(pcNode) + '</div>' +
@@ -1258,6 +1428,28 @@
         'Link · ' + (ln.linkBaud / 1e6) + (ln.fastBaud ? '–' + (ln.fastBaud / 1e6) : '') + ' Mbaud</button></span>' +
       block('remote', remNode, 'target', 'Remote', sys.remote.name || 'The remote board', remSub) +
       '</div>' + FL.route.blocks(m) + '</div>';
+    return h;
+  }
+  // The remote's firmware from Signoff FW: a pick of the passthrough releases this token reads.
+  function remoteReleaseField(sys, dis) {
+    var opts = remoteReleaseOptions(), cur = sys.remote.release ? sys.remote.release.review + '/' + sys.remote.release.release : '';
+    if (!opts.length && !cur) return '';
+    if (cur && !opts.some(function (o) { return o.key === cur; })) opts.unshift({ key: cur, label: sys.remote.release.target + ' ' + sys.remote.release.version + ' (not listed now)' });
+    return '<div class="field"><label for="sys-rel">Or a release from Signoff FW</label><select class="input" id="sys-rel" data-change="fwrel-remote"' + dis + '>' +
+      '<option value=""' + (cur ? '' : ' selected') + '>' + (cur ? 'Keep it, or pick another…' : 'Pick a release…') + '</option>' +
+      opts.map(function (o) { return '<option value="' + esc(o.key) + '"' + (o.key === cur ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select>' +
+      '<div class="hint-text">The system keeps the release it’s given; it never switches by itself.</div></div>';
+  }
+  // Under the remote: the release it holds, and a newer Released one of the same target if there is one.
+  function remoteReleaseNote(sys) {
+    var r = sys.remote.release;
+    if (!r) return '';
+    var x = sysRelease(sys), newer = x && FL.fwr.newerThan(x.target, x.rel);
+    var h = '<p class="note">From Signoff FW: ' + esc(r.target + ' ' + r.version) + (x ? ', ' + esc(FL.fwr.LABEL[x.rel.state].toLowerCase()) : S.fwr && S.fwr.state === 'ok' ? ' (no longer listed for you)' : '') +
+      (r.board ? '. Its board answers “' + esc(r.board) + '”; Flasher stops if another board does' : '') + '.</p>';
+    if (x && x.rel.state === 'withdrawn') h += '<div class="hint fl-warn"><b>▲ Withdrawn</b>' + esc(x.rel.withdrawnWhy || 'This release was withdrawn.') + '</div>';
+    if (newer) h += '<div class="hint fl-rel-newer"><b>' + esc(newer.version) + ' is out</b>A newer release of ' + esc(x.target.name) + ' was released' + (newer.releasedAt ? ' on ' + esc(newer.releasedAt) : '') + '.' +
+      '<div class="fl-row"><button class="btn btn-primary" data-act="rel-to-sys" data-rel="' + esc(x.target.id + '/' + newer.id) + '" data-sys="' + esc(sys.id) + '">Switch to ' + esc(newer.version) + '</button></div></div>';
     return h;
   }
   function sysEditor() {
@@ -1281,7 +1473,7 @@
         '<div class="field"><label>Firmware</label><div class="fl-row fl-sys-file">' + (f ? '<span class="chip fl-mono" title="SHA-256 ' + esc(f.sha256) + '">' + esc(f.name) + ' · ' + esc(I.fmtBytes(f.size)) + '</span>' : '') +
         '<button class="btn" data-act="sys-file"' + dis + '>' + (f ? 'Another file…' : 'Open a .hex or .elf…') + '</button>' +
         (DEMO ? '<button class="btn btn-plain" data-act="sys-demo-file"' + dis + '>Use the demo display’s build</button>' : '') + '</div>' +
-        '<div class="hint-text">Or drop it anywhere on the page.</div></div></div>' +
+        '<div class="hint-text">Or drop it anywhere on the page.</div></div>' + remoteReleaseField(sys, dis) + '</div>' + remoteReleaseNote(sys) +
         (seen ? '<p class="note">Last answered: ' + esc([seen.board ? '“' + seen.board + '”' : '', seen.chip, 'bootloader ' + seen.version].filter(Boolean).join(', ')) + ', ' + esc(relDay(seen.at)) + '.</p>' : '') + '</div>';
     }
     return '';
@@ -1774,6 +1966,8 @@
       case 'sys-block': if (S.sys) { S.sys.block = S.sys.block === el.dataset.block ? '' : el.dataset.block; render(); } break;
       case 'sys-file': if (S.run && S.run.busy) toast('Wait for the update to finish.'); else $('#sys-file-input').click(); break;
       case 'sys-demo-file': demoSystemFile(); break;
+      case 'open-rel': openRelease(el.dataset.rel); break;
+      case 'rel-to-sys': releaseToSystem(el.dataset.rel || S.relKey, el.dataset.sys || ''); break;
       case 'sys-link-reset': if (S.sys) { S.sys.sys.link = Object.assign({}, LINK); systemChanged(); } break;
       case 'sys-forget-port': if (S.sys) { S.sys.sys.learned = null; systemChanged(); toast('Flasher will ask for the passthrough port again'); } break;
       case 'sys-delete': deleteSystem(); break;
@@ -1819,7 +2013,7 @@
       case 'sign-out':
         if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too. Flasher also forgets the passthrough systems and their files kept here.')) break;
         (window.SignoffAuth ? window.SignoffAuth.signOut() : Promise.resolve()).catch(function () { /* cleared below */ }).then(function () {
-          C.auth.clear(); forgetKept(); forgetSystems(); closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
+          C.auth.clear(); forgetKept(); forgetSystems(); try { localStorage.removeItem('flasher.v1.fwReleases'); } catch (e) { /* storage blocked */ } S.fwr = null; closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
         });
         break;
       case 'gh-signin': ghSignIn(el); break;
@@ -1863,6 +2057,7 @@
     if (k === 'con-baud') { S.conBaud = +ev.target.value; render(); }
     if (k === 'con-filter') { S.conFilter = ev.target.value; render(); }
     if (k && k.indexOf('sys-') === 0) systemField(k.slice(4), ev.target.value);
+    if (k === 'fwrel-remote' && ev.target.value && S.sys) releaseToSystem(ev.target.value, S.sys.sys.id);
   });
 
   document.addEventListener('submit', function (ev) {
@@ -1934,14 +2129,30 @@
         catch (e) { return toast(f.name + ': ' + e.message); }
       }
       if (!segments && bytes.length > 16 * 1048576) return toast('That .bin is over 16 MB; it isn’t firmware for these boards.');
-      return I.sha256(bytes).then(function (h) {
-        var ids = Object.keys(boards());
-        S.local = { name: f.name, bytes: bytes, segments: segments, sha256: h, boardId: S.local && boards()[S.local.boardId] ? S.local.boardId : ids.length === 1 ? ids[0] : '' };
-        unitsFor = null;
-        if (S.tab === 'console') S.tab = 'serial';
-        select('local');
-      });
+      return I.sha256(bytes).then(function (h) { openLocalBytes(f.name, bytes, h, null, null, segments); });
     });
+  }
+  /* Bytes to flash as a file: a picked or dropped one, or a Signoff FW release (release: { key, target, version,
+     state, withdrawnWhy, base }; boardId: the board its release names, '' for Any STM32). */
+  function openLocalBytes(name, bytes, sha256, boardId, release, segments) {
+    if (segments === undefined) {
+      segments = null;
+      if (!/\.bin$/i.test(name)) {
+        try { var img = FL.files.parse(name, bytes); if (!img.needsBase) segments = img.segments; }
+        catch (e) { return toast(name + ': ' + e.message); }
+      }
+    }
+    var ids = Object.keys(boards());
+    var bid = boardId != null ? boardId : S.local && boards()[S.local.boardId] ? S.local.boardId : ids.length === 1 ? ids[0] : '';
+    // A release's .bin names its flash address; Flasher writes a .bin at its board's flash base, so they must agree.
+    var b = boards()[bid] || I.GENERIC;
+    if (release && release.base && !segments && b.flash && parseInt(release.base, 16) !== b.flash.base) {
+      return toast(name + ' goes to ' + release.base + ', and ' + b.name + '’s flash starts at ' + I.hex(b.flash.base) + '. Release a .hex or .elf instead.');
+    }
+    S.local = { name: name, bytes: bytes, segments: segments, sha256: sha256, boardId: bid, release: release || null };
+    unitsFor = null;
+    if (S.tab === 'console') S.tab = 'serial';
+    select('local');
   }
   $('#file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; openLocal(f); });
   // A passthrough system's remote has its own picker, for a .hex or .elf only.

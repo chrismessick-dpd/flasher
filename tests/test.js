@@ -837,6 +837,93 @@
     eq(got.length, f.parts[1].size, 'a part reads back from there');
   });
 
+  // ── Signoff FW releases (assets/fwreleases.js; ../fw_design_review/docs/releases.md) ──
+  // A FW data repo (FTEs) with one target, and a shared review-fw-* repo with another; files written as the
+  // Releases tab writes them (model.releaseFiles).
+  function fwWorld() {
+    var gh = FakeGitHub({ owner: OWNER, tokens: { chris: OWNER, bob: 'bob', eve: 'eve' } }), G = Signoff.GitHubStore;
+    var hexText = FL.files.toHex([{ addr: 0x08010000, data: image(2048, 4) }]);
+    function target(id, name, rels) {
+      var doc = { id: id, meta: { name: name, project: 'Proj' }, releases: {} }, files = {};
+      return rels.reduce(function (chain, r) {
+        return chain.then(function () {
+          return I.sha256(r.bytes).then(function (sha) {
+            var rec = M.newRelease({ version: r.version, state: r.state, file: { name: r.name, size: r.bytes.length, sha256: sha, parts: (G.splitParts('x', r.bytes) || []).length }, load: r.load }, 'Ann');
+            if (r.withdrawnWhy) { rec.state = 'withdrawn'; rec.withdrawnWhy = r.withdrawnWhy; }
+            rec.createdAt = r.at; doc.releases[rec.id] = rec;
+            M.releaseFiles('', id, rec, r.bytes, 'ann', G.splitParts).forEach(function (f) { files[f.path] = f.bytes || f.text; });
+          });
+        });
+      }, Promise.resolve()).then(function () { doc.summary = { releases: M.releaseSummary(doc) }; files['projects/' + id + '.json'] = JSON.stringify(doc); return files; });
+    }
+    return Promise.all([
+      target('fA', 'Main Firmware', [
+        { version: '1.0.0', state: 'released', name: 'main-1.0.0.elf', bytes: FL.fwr.makeElf(0x08000000, image(8192, 9)), load: { via: 'usb', board: 'a1' }, at: '2026-11-01T00:00:00.000Z' },
+        { version: '1.1.0', state: 'released', name: 'main-1.1.0.bin', bytes: image(4096, 6), load: { via: 'usb', board: 'a1', base: '0x08000000' }, at: '2026-11-02T00:00:00.000Z' },
+        { version: '1.2.0', state: 'draft', name: 'main-1.2.0.hex', bytes: new TextEncoder().encode(hexText), load: { via: 'usb', board: 'a1' }, at: '2026-11-03T00:00:00.000Z' }]),
+      target('fB', 'Display Firmware', [
+        { version: '2.0.0', state: 'released', name: 'disp-2.0.0.hex', bytes: new TextEncoder().encode(hexText), load: { via: 'passthrough', board: 'disp' }, at: '2026-11-01T00:00:00.000Z', withdrawnWhy: 'Bad colors' },
+        { version: '2.1.0', state: 'released', name: 'disp-2.1.0.hex', bytes: new TextEncoder().encode(hexText), load: { via: 'passthrough', board: 'disp' }, at: '2026-11-02T00:00:00.000Z' }])
+    ]).then(function (t) {
+      return gh.repo('fw_design_review_data', Object.assign({ 'README.md': '# fw' }, t[0])).then(function () {
+        return gh.repo('review-fw-display', t[1], { collaborators: ['bob'] });
+      }).then(function () { return gh; });
+    });
+  }
+  function noFwCache() { try { localStorage.removeItem('flasher.v1.fwReleases'); } catch (e) { /* blocked */ } }
+  test('FW releases: an FTE sees the data repo and the shared targets; a contractor only what’s shared', async function () {
+    noFwCache();
+    var gh = await fwWorld();
+    var all = await FL.fwr.load({ token: 'chris', fetch: gh.fetch });
+    ok(all.fte, 'the owner opens fw_design_review_data');
+    eq(all.targets.map(function (t) { return t.name + ':' + t.releases.length; }).join(','), 'Display Firmware:2,Main Firmware:3', 'both targets, every release listed (drafts too: the page hides them)');
+    eq(all.errors.length, 0, 'no errors');
+    var bob = await FL.fwr.load({ token: 'bob', fetch: gh.fetch });
+    ok(!bob.fte, 'a contractor isn’t an FTE');
+    eq(bob.targets.map(function (t) { return t.name; }).join(','), 'Display Firmware', 'a contractor sees only the target shared with them');
+    var eve = await FL.fwr.load({ token: 'eve', fetch: gh.fetch });
+    eq(eve.targets.length + eve.errors.length, 0, 'someone with nothing shared sees nothing, and no errors');
+    var disp = all.targets[0];
+    eq(disp.releases[0].withdrawnWhy, 'Bad colors', 'a withdrawn release carries why');
+    eq(FL.fwr.newerThan(disp, disp.releases[0]).version, '2.1.0', 'a newer Released build of the same target is found');
+    eq(FL.fwr.newerThan(disp, disp.releases[1]), null, 'the newest has nothing newer');
+    noFwCache();
+  });
+  test('FW releases: a release’s file is read from release.json and checked by SHA-256', async function () {
+    noFwCache();
+    var gh = await fwWorld(), all = await FL.fwr.load({ token: 'chris', fetch: gh.fetch }), main = all.targets[1];
+    var f0 = await FL.fwr.fetchRelease(main, main.releases[0], { token: 'chris', fetch: gh.fetch });
+    eq(f0.name, 'main-1.0.0.elf'); eq(f0.load.via, 'usb'); eq(f0.load.board, 'a1');
+    eq(await I.sha256(f0.bytes), main.releases[0].sha256, 'the ELF reads back whole');
+    eq(FL.files.parse(f0.name, f0.bytes).segments[0].addr, 0x08000000, 'makeElf’s segment loads at its address');
+    var f1 = await FL.fwr.fetchRelease(main, main.releases[1], { token: 'chris', fetch: gh.fetch });
+    eq(f1.load.base, '0x08000000', 'a .bin keeps its flash address');
+    var bad = Object.assign({}, main.releases[1], { sha256: 'c'.repeat(64) });
+    await rejects(FL.fwr.fetchRelease(main, bad, { token: 'chris', fetch: gh.fetch }), /match/, 'a SHA-256 that doesn’t match');
+    noFwCache();
+  });
+  test('FW releases: summary entries from a file are checked', function () {
+    var sha = 'a'.repeat(64);
+    ok(FL.fwr.cleanRelease({ id: 'r1', version: '1', state: 'released', via: 'usb', board: 'a1', kind: 'elf', size: 9, sha256: sha, path: 'releases/p1/r1/release.json' }, 'p1'), 'a good entry passes');
+    ok(!FL.fwr.cleanRelease({ id: 'r1', kind: 'elf', sha256: sha, path: 'releases/other/r1/release.json' }, 'p1'), 'a path outside its review is refused');
+    ok(!FL.fwr.cleanRelease({ id: 'r1', kind: 'exe', sha256: sha, path: 'releases/p1/r1/release.json' }, 'p1'), 'an unknown kind is refused');
+    ok(!FL.fwr.cleanRelease({ id: '../x', kind: 'elf', sha256: sha, path: 'releases/p1/../x/release.json' }, 'p1'), 'a bad id is refused');
+    var c = FL.fwr.cleanRelease({ id: 'r1', state: '<b>', via: 'radio', board: 'Bad Board', kind: 'hex', sha256: sha, path: 'releases/p1/r1/release.json' }, 'p1');
+    ok(c.state === 'draft' && c.via === 'usb' && c.board === '', 'unknown states, routes, and boards fall back');
+    eq(FL.fwr.slim({ id: 'p1', meta: { name: 'X' }, summary: {} }), null, 'a review with no releases isn’t listed');
+  });
+  test('FW releases: the demo has the thermostat’s three and a passthrough display build', async function () {
+    var c = await FL.catalog.loadDemo(), d = await FL.fwr.loadDemo(c);
+    eq(d.targets.map(function (t) { return t.id + ':' + t.releases.map(function (r) { return r.version + ' ' + r.state; }).join('/'); }).join(','),
+      'fdemo3:0.8.0 withdrawn/0.9.0 released/0.9.1 draft,fdemo-display:1.4.0 released', 'the demo’s targets match Signoff FW’s');
+    var t = d.targets[0], f = await d.fetch(t, t.releases[1]);
+    eq(await I.sha256(f.bytes), t.releases[1].sha256, 'a demo release’s bytes match its SHA-256');
+    eq(FL.files.parse(f.name, f.bytes).segments[0].addr, c.boards['tstat-main'].flash.base, 'the demo ELF loads at the Main PCBA’s flash');
+    var disp = d.targets[1], g = await d.fetch(disp, disp.releases[0]);
+    eq(disp.releases[0].via, 'passthrough'); eq(disp.releases[0].board, 'tstat-display');
+    ok(FL.files.parse(g.name, g.bytes).segments.length > 1, 'the display build is the .hex a system’s remote takes');
+  });
+
   // ── Run ──
   var out = document.getElementById('out'), failed = 0;
   tests.reduce(function (p, t) {

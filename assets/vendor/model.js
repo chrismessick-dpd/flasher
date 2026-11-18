@@ -227,7 +227,7 @@
     var last = { updatedAt: '', updatedBy: '' };
     function see(rec) { if (rec && newer(last, rec) === rec) last = rec; }
     see(project.meta);
-    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec', 'tags', 'rework'].forEach(function (k) {
+    ['items', 'sections', 'comments', 'custom', 'reqs', 'revisions', 'spec', 'tags', 'rework', 'releases'].forEach(function (k) {
       Object.keys(project[k] || {}).forEach(function (id) { see(project[k][id]); });
     });
     return last;
@@ -235,7 +235,7 @@
 
   // The records of a project edited after `since` (an ISO time; '' or missing: every record),
   // newest first, for the "unsynced changes" list. Read-only. Each entry:
-  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec' | 'tag' | 'rework',
+  //   { kind: 'meta' | 'check' | 'section' | 'comment' | 'custom' | 'req' | 'revision' | 'spec' | 'tag' | 'rework' | 'release',
   //     id, item (the check a comment or check record is about, '' if none),
   //     label (what it is), detail (its state or text), at, by, deleted }
   // Values come straight from the document (untrusted): callers escape them.
@@ -269,6 +269,7 @@
     each('spec', function (r, id) { add('spec', r, id, '', cut(r.title, 120) || 'Untitled section', r.deleted ? '' : 'description'); });
     each('tags', function (r, id) { add('tag', r, id, '', '“' + cut(r.note, 120) + '”', r.deleted ? 'removed' : 'version ' + String(r.commit || '').slice(0, 7)); });
     each('rework', function (r, id) { add('rework', r, id, '', ((typeof r.ref === 'string' ? r.ref + ' ' : '') + cut(r.title, 120)).trim() || 'Rework', r.deleted ? 'removed' : REWORK_LABEL[oneOf(REWORK_STATUS, r.status, 'planned')].toLowerCase()); });
+    each('releases', function (r, id) { add('release', r, id, '', 'Release ' + (cut(r.version, 40) || String(id)), r.deleted ? 'removed' : RELEASE_STATE_LABEL[oneOf(RELEASE_STATE, r.state, 'draft')].toLowerCase()); });
     return out.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
   }
 
@@ -278,7 +279,7 @@
   // changesSince's shape plus before and after (the records themselves; before is null for a new one).
   // before null: every record of after is new (the file's first version). Rows are attributed by each
   // record's own stamp, never by who made the commit. Read-only; values are untrusted (escape them).
-  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec', tag: 'tags', rework: 'rework' };
+  var HIST_MAP = { meta: 'meta', check: 'items', section: 'sections', comment: 'comments', custom: 'custom', req: 'reqs', revision: 'revisions', spec: 'spec', tag: 'tags', rework: 'rework', release: 'releases' };
   function recordDiff(before, after, templates) {
     if (!after || !after.meta) return [];
     var key = function (r) { return r && typeof r === 'object' ? String(r.updatedAt || '') + '|' + String(r.updatedBy || '') : ''; };
@@ -421,6 +422,10 @@
     // there are none, so other reviews keep their bytes.
     var rw = reworkStats(project);
     if (rw.total) out.rework = rw;
+    // summary.releases: the firmware releases, oldest first (releaseSummary). Left out while there are
+    // none, so other reviews keep their bytes.
+    var rl = releaseSummary(project);
+    if (rl.length) out.releases = rl;
     return out;
   }
 
@@ -1808,6 +1813,8 @@
       tags: local.tags || remote.tags ? mergeMaps(local.tags || {}, remote.tags || {}) : undefined,
       // Bring-up reworks (reworkOn), records like any other; only once either copy has one.
       rework: local.rework || remote.rework ? mergeMaps(local.rework || {}, remote.rework || {}) : undefined,
+      // Firmware releases (config.releases), records like any other; only once either copy has one.
+      releases: local.releases || remote.releases ? mergeMaps(local.releases || {}, remote.releases || {}) : undefined,
       // Derived (see projectSummary): carried along for writers that can't rebuild it.
       summary: local.summary && remote.summary && (local.summary.at || '') > (remote.summary.at || '') ? local.summary : remote.summary || local.summary
     };
@@ -2255,6 +2262,144 @@
     }, user);
   }
 
+  // ── Releases (fw_design_review/docs/releases.md) ──────────
+  // config.releases (Signoff FW): builds of the target's firmware, one record each in project.releases,
+  // merged like every other:
+  //   { id, version: '1.4.0', state: 'draft' | 'released' | 'withdrawn',
+  //     file: { name, kind: 'elf' | 'hex' | 'bin', size, sha256, parts (a count, 0 for one file) },
+  //     load: { via: 'usb' | 'passthrough', board, base ('0x…', a .bin's flash address) },
+  //     source: { repo, sha, dirty }, notes, releasedAt 'YYYY-MM-DD', withdrawnWhy,
+  //     createdAt, updatedAt, updatedBy, deleted }
+  // The file and release.json are written once, beside the review: releases/<project id>/<release id>/
+  // (releaseDir; moved when it's shared, Workspace.checkerDirs). A file over GitHubStore.PART_BYTES is
+  // stored in parts, <name>.001, .002, … (fileParts). The state lives only in the record.
+  // meta.load is the target's own default (how it loads, its board), copied into each new release.
+  var RELEASE_STATE = ['draft', 'released', 'withdrawn'];
+  var RELEASE_STATE_LABEL = { draft: 'Draft', released: 'Released', withdrawn: 'Withdrawn' };
+  var RELEASE_KINDS = ['elf', 'hex', 'bin'];
+  var RELEASE_VIA = ['usb', 'passthrough'];
+  var RELEASE_FILE = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,119}$/;
+  var USB_BOARD = /^[a-z0-9][a-z0-9_-]{0,47}$/, INFO_BOARD = /^[a-z0-9][a-z0-9-]{0,15}$/;   // INFO's board id: 16 ASCII bytes
+  function releasesOn() { return !!C.releases; }
+  function releaseKindOf(name) { var m = /\.(elf|hex|bin)$/i.exec(String(name || '')); return m ? m[1].toLowerCase() : ''; }
+  // How a build loads, as it's safe to use. A passthrough remote needs addresses, so never a .bin; a
+  // .bin over USB needs its base. kind: the file's kind, or '' (meta.load, any kind).
+  function cleanLoad(l, kind) {
+    l = l && typeof l === 'object' ? l : {};
+    var via = oneOf(RELEASE_VIA, l.via, 'usb'), board = typeof l.board === 'string' ? l.board.trim().toLowerCase() : '';
+    var base = typeof l.base === 'string' && /^0x[0-9a-f]{1,8}$/i.test(l.base.trim()) ? '0x' + l.base.trim().slice(2).toUpperCase() : '';
+    if (!(via === 'passthrough' ? INFO_BOARD : USB_BOARD).test(board)) board = '';
+    var out = { via: via, board: board };
+    if (via === 'usb' && kind !== 'elf' && kind !== 'hex' && base) out.base = base;
+    return out;
+  }
+  // What's wrong with a load for a file of this kind, or ''.
+  function loadProblem(load, kind) {
+    if (load.via === 'passthrough' && kind === 'bin') return 'A passthrough remote needs addresses: release a .hex or .elf, not a .bin.';
+    if (load.via === 'passthrough' && !load.board) return 'Name the board, as its bootloader reports it (up to 16 letters, digits, and dashes).';
+    if (load.via === 'usb' && kind === 'bin' && !load.base) return 'A .bin needs the flash address it goes to, such as 0x08000000.';
+    return '';
+  }
+  function cleanRelease(r, key) {
+    r = r && typeof r === 'object' ? r : {};
+    var f = r.file && typeof r.file === 'object' ? r.file : {}, src = r.source && typeof r.source === 'object' ? r.source : {};
+    var name = RELEASE_FILE.test(f.name || '') && releaseKindOf(f.name) ? f.name : '', kind = releaseKindOf(name);
+    return {
+      id: key, version: clip(r.version, 40), state: oneOf(RELEASE_STATE, r.state, 'draft'),
+      file: { name: name, kind: kind, size: Math.max(0, Math.floor(+f.size) || 0), sha256: hex(f.sha256, HEX64), parts: Math.max(0, Math.min(999, Math.floor(+f.parts) || 0)) },
+      load: cleanLoad(r.load, kind),
+      source: { repo: /^[\w.-]+\/[\w.-]+$/.test(src.repo || '') ? src.repo : '', sha: /^[0-9a-f]{7,40}$/i.test(src.sha || '') ? src.sha.toLowerCase() : '', dirty: src.dirty === true },
+      notes: clip(r.notes, 4000), releasedAt: isoDay(r.releasedAt), withdrawnWhy: clip(r.withdrawnWhy, 400),
+      createdAt: isoTime(r.createdAt), updatedAt: isoTime(r.updatedAt), updatedBy: clip(r.updatedBy, 100)
+    };
+  }
+  // Live releases, cleaned, oldest first. Only ones with a usable file: anything else was hand-edited.
+  function liveReleases(project) {
+    var m = project && project.releases || {};
+    return Object.keys(m).filter(function (k) { var x = m[k]; return x && typeof x === 'object' && !x.deleted && RUN_ID.test(k); })
+      .map(function (k) { return cleanRelease(m[k], k); })
+      .filter(function (r) { return r.file.name && r.file.sha256; })
+      .sort(function (a, b) { return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); });
+  }
+  // The newest Released build (with drafts: the newest draft or Released one), or null.
+  function latestRelease(project, drafts) {
+    var ok = liveReleases(project).filter(function (r) { return r.state === 'released' || (drafts && r.state === 'draft'); });
+    return ok[ok.length - 1] || null;
+  }
+  // The next version: the last number of the latest one, plus one (0.9.0 → 0.9.1, 1.9 → 1.10). '1.0.0' to start.
+  function nextReleaseVersion(project) {
+    var all = liveReleases(project), last = all[all.length - 1];
+    if (last && /\d+(?!.*\d)/.test(last.version)) return last.version.replace(/(\d+)(?!.*\d)/, function (n) { return String(parseInt(n, 10) + 1); });
+    return '1.0.0';
+  }
+  // A firmware file's kind from its bytes ('elf', 'hex', or 'bin'), checked against its name's. Returns
+  // { kind } or { error }. An ELF starts 7F 45 4C 46; an Intel HEX is :-records only.
+  function sniffFirmware(name, bytes) {
+    var kind = releaseKindOf(name);
+    if (!kind) return { error: 'A release is a .elf, .hex, or .bin file.' };
+    if (!bytes || !bytes.length) return { error: 'That file is empty.' };
+    var elf = bytes.length > 4 && bytes[0] === 0x7f && bytes[1] === 0x45 && bytes[2] === 0x4c && bytes[3] === 0x46;
+    var hexText = false;
+    if (bytes[0] === 0x3a) {
+      var head = new TextDecoder().decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+      var lines = head.split(/\r?\n/);
+      if (bytes.length > 65536) lines.pop();   // the last line may be cut
+      hexText = lines.every(function (l) { return !l || /^:[0-9A-Fa-f]{10,}$/.test(l); });
+    }
+    if (kind === 'elf' && !elf) return { error: name + ' isn’t an ELF file.' };
+    if (kind === 'hex' && !hexText) return { error: name + ' isn’t an Intel HEX file.' };
+    if (kind === 'bin' && (elf || hexText)) return { error: name + ' is really ' + (elf ? 'an ELF' : 'an Intel HEX') + ' file: name it .' + (elf ? 'elf' : 'hex') + '.' };
+    return { kind: kind };
+  }
+  // Where a release's files are, under the review's data folder: releaseDir + name, or its parts.
+  function releaseDir(projectId, releaseId) { return 'releases/' + projectId + '/' + releaseId + '/'; }
+  function fileParts(path, n) {
+    var out = [];
+    for (var i = 1; i <= n; i++) out.push(path + '.' + ('00' + i).slice(-3));
+    return out;
+  }
+  function releasePaths(projectId, r) {
+    var path = releaseDir(projectId, r.id) + r.file.name;
+    return r.file.parts ? fileParts(path, r.file.parts) : path;
+  }
+  // A new release record. fields: { version, state, file: { name, size, sha256, parts }, load, source, notes }.
+  function newRelease(fields, user) {
+    var t = now(), name = RELEASE_FILE.test(fields.file && fields.file.name || '') ? fields.file.name : '', kind = releaseKindOf(name);
+    var src = fields.source || {}, state = oneOf(RELEASE_STATE, fields.state, 'draft');
+    var r = { id: uid('r'), version: clip(fields.version, 40), state: state,
+      file: { name: name, kind: kind, size: Math.max(0, Math.floor(+fields.file.size) || 0), sha256: hex(fields.file.sha256, HEX64), parts: Math.max(0, Math.floor(+fields.file.parts) || 0) },
+      load: cleanLoad(fields.load, kind),
+      source: cleanRelease({ source: src }, '').source,
+      notes: clip(fields.notes, 4000), releasedAt: state === 'released' ? t.slice(0, 10) : '', withdrawnWhy: '', createdAt: t, deleted: false };
+    return stamp(r, user);
+  }
+  // release.json (format 1), written once beside the file: what Flasher needs without the review.
+  function releaseJson(projectId, rec, login) {
+    var r = cleanRelease(rec, rec.id), path = releaseDir(projectId, r.id) + r.file.name, file = { name: r.file.name, kind: r.file.kind, size: r.file.size, sha256: r.file.sha256, path: path };
+    if (r.file.parts) file.parts = fileParts(path, r.file.parts);
+    var out = { format: 1, review: projectId, id: r.id, version: r.version, file: file, load: r.load };
+    if (r.source.repo || r.source.sha) out.source = r.source;
+    out.publishedAt = r.createdAt; out.publishedBy = clip(login, 100) || r.updatedBy;
+    return out;
+  }
+  // A new release's files for one putFiles commit: the file (or its parts, when split, GitHubStore.splitParts,
+  // says so) and release.json. base: the store's data folder ('' or 'data/'); release.json's paths are under it.
+  function releaseFiles(base, projectId, rec, bytes, login, split) {
+    var dir = base + releaseDir(projectId, rec.id), path = dir + rec.file.name, parts = split ? split(path, bytes) : null;
+    if ((parts ? parts.length : 0) !== (rec.file.parts || 0)) throw new Error('The release’s part count doesn’t match its file');
+    return (parts || [{ path: path, bytes: bytes }]).concat([{ path: dir + 'release.json', text: JSON.stringify(releaseJson(projectId, rec, login), null, 2) + '\n' }]);
+  }
+  // summary.releases, oldest first: what Signoff PL and Flasher list. path is the release.json; withdrawnWhy only
+  // on a withdrawn one that says why (Flasher warns with it).
+  function releaseSummary(project) {
+    return liveReleases(project).map(function (r) {
+      var out = { id: r.id, version: r.version, state: r.state, releasedAt: r.releasedAt, via: r.load.via, board: r.load.board,
+        kind: r.file.kind, size: r.file.size, sha256: r.file.sha256, path: releaseDir(project.id, r.id) + 'release.json' };
+      if (r.state === 'withdrawn' && r.withdrawnWhy) out.withdrawnWhy = r.withdrawnWhy;
+      return out;
+    });
+  }
+
   // A run file Fabcheck stored ({ run, findings }, docs/fabcheck-link.md) as Signoff uses it, or
   // null if it isn't one. Anyone who can write the review's repo wrote it, so ids, hashes and
   // paths are checked and text is cut to size. The zip's place is kept relative to the run's
@@ -2450,6 +2595,10 @@
     liveRework: liveRework, newRework: newRework, nextReworkRef: nextReworkRef, reworkStats: reworkStats, reworkPicPath: reworkPicPath,
     REV_STATUS: REV_STATUS, REV_STATUS_LABEL: REV_STATUS_LABEL, liveRevisions: liveRevisions, latestRevision: latestRevision,
     supersededBy: supersededBy, revisionForRun: revisionForRun, nextRevLabel: nextRevLabel, newRevision: newRevision,
-    cleanRevision: cleanRevision, cleanRun: cleanRun, zipParts: zipParts, groupRuns: groupRuns, zipFolders: zipFolders
+    cleanRevision: cleanRevision, cleanRun: cleanRun, zipParts: zipParts, groupRuns: groupRuns, zipFolders: zipFolders,
+    RELEASE_STATE: RELEASE_STATE, RELEASE_STATE_LABEL: RELEASE_STATE_LABEL, RELEASE_KINDS: RELEASE_KINDS, RELEASE_VIA: RELEASE_VIA,
+    releasesOn: releasesOn, releaseKindOf: releaseKindOf, cleanLoad: cleanLoad, loadProblem: loadProblem, cleanRelease: cleanRelease,
+    liveReleases: liveReleases, latestRelease: latestRelease, nextReleaseVersion: nextReleaseVersion, sniffFirmware: sniffFirmware,
+    releaseDir: releaseDir, fileParts: fileParts, releasePaths: releasePaths, newRelease: newRelease, releaseJson: releaseJson, releaseFiles: releaseFiles, releaseSummary: releaseSummary
   };
 })(window.Signoff = window.Signoff || {});

@@ -308,3 +308,12 @@ body.has-banner .fl-con-page { height: calc(100vh - 56px - 34px); }
 
 /* A file dragged over the page: the main pane shows where it lands. */
 body.fl-dropping #main { outline: 3px dashed var(--accent); outline-offset: -8px; }
+
+/* Signoff FW releases (assets/fwreleases.js): states read as words; a draft is dashed, a withdrawn one struck through
+   and hatched as a warning (never by hue alone). */
+.chip.fl-rel-draft { background: transparent; border: 1px dashed var(--text-3); color: var(--text-2); }
+.chip.fl-rel-released { background: var(--accent-soft); color: var(--accent-ink); }
+.chip.fl-rel-withdrawn { background: var(--warn-hatch), var(--warn-soft); color: var(--text); text-decoration: line-through; }
+.fl-rel-row.withdrawn .proj-name { text-decoration: line-through; color: var(--text-3); }
+.fl-rel-row.draft .proj-name::after { content: ' · draft'; font-weight: 400; color: var(--text-3); }
+.fl-rel-systems { display: flex; flex-wrap: wrap; gap: 8px; }

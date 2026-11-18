@@ -245,6 +245,33 @@ users.json            flasher_data only: the People list
 - Numbers may be JSON numbers or `"0x…"` strings.
 - Entries that don't validate are skipped and listed on the page (`FL.image.cleanManifest`).
 
+## Releases from Signoff FW
+
+A second firmware source beside the manifest (2026-11-17, Chris; the design is
+`../fw_design_review/docs/releases.md`). FTEs publish builds from Signoff FW's Releases tab, so nobody needs
+`publish.py` for them; `flasher_data` and `publish.py` stay for the Arduino examples and other boards.
+
+- **Who sees what: FW sharing.** `assets/fwreleases.js` (`FL.fwr`) reads `fw_design_review_data` (FTEs) and
+  every `review-fw-*` repo the token can list, and from each review file only `summary.releases`, cached by blob
+  SHA (`flasher.v1.fwReleases`, cleared at Sign out). Flasher's own People list doesn't add to or narrow it.
+  Drafts are listed for FTEs only; withdrawn releases are listed with their reason and a warning.
+- **The sidebar** has a group per target, "<target> · Signoff FW", one row per release, newest first.
+- **A release over USB** is fetched when it's picked: its `release.json`, then the file (joined from its parts),
+  refused unless its SHA-256 matches the review's summary. It then opens as a file for the board it names
+  (Any STM32 when the manifest doesn't know it), with a banner saying where it's from. A `.bin` release's flash
+  address must be its board's flash base.
+- **A passthrough release** goes on a passthrough system's remote: from its page (an existing system, or a new
+  one), or from the Remote block's *Or a release from Signoff FW*. The system keeps the reference
+  (`remote.release`: repo, review, release, version, SHA-256, and board) and its bytes in IndexedDB, as it keeps
+  a file; a file picked later replaces it. It never switches by itself: a newer Released build of the same
+  target shows "<version> is out" with **Switch**. After INFO, a bootloader that names another board stops the
+  update before anything is compared or written; one that names none is logged, and the update goes on.
+- **Deep link.** `?release=<review id>/<release id>` (Signoff FW's Open in Flasher) opens that release once the
+  list is read.
+- **The demo** lists the thermostat's three (Signoff FW's `fdemo3`: 0.8.0 withdrawn, 0.9.0 released, 0.9.1 draft;
+  made-up ELF and HEX images for the Main PCBA) and a *Display Firmware* 1.4.0 passthrough release (the demo
+  display's build), which a demo system's remote can take.
+
 ## Publishing firmware
 
 `tools/publish.py` builds a firmware repo's examples and commits them to their project's repo:

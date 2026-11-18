@@ -129,6 +129,15 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   The Signoff side (FW releases as a firmware source, PL and Loom) is the session *Signoff integration for Flasher
   passthrough systems*.
 
+- **Releases from Signoff FW (2026-11-17, Chris: design agreed in `../fw_design_review/docs/releases.md`, then
+  "go"; built after slice 1, not committed).** README *Releases from Signoff FW*. `assets/fwreleases.js` (`FL.fwr`:
+  `load`, `fetchRelease`, `loadDemo`, `makeElf`); in `app.js`, *Signoff FW releases* (`loadFwr`, `fwrRows`,
+  `releaseHtml`, `openRelease`, `openLocalBytes`, `releaseToSystem`, `setSystemBytes`, `remoteReleaseField`,
+  `remoteReleaseNote`, and `wantBoard` checked in the system's `split`). FW sharing governs; drafts for FTEs only.
+  Tests 77 (4 new, against `tests/fakegithub.js` with files written by the engine's `model.releaseFiles`). Tried in
+  `?demo`: `?release=fdemo3/r3-1` opened and flashed; the display's 1.4.0 put on a new system and written (4 of 24
+  blocks); a remote naming another board stopped before any write. Not tried signed in against real repos.
+
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:
