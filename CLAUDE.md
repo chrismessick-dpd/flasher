@@ -81,7 +81,7 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   and every USB call times out after 5 s, but the J-Link is labeled beta and shouldn't be used for long transfers
   until that's understood. Not tried on hardware: G0 programming and G0 option bytes (the ST-LINK was on the H563).
 
-- **One page, three tabs (2026-11-17, Chris; not committed).** Designed in `lab/layout.html` (Chris chose
+- **One page, three tabs (2026-11-17, Chris; pushed: `flasher` `3d9e296`).** Designed in `lab/layout.html` (Chris chose
   direction B: tabs across the top, the firmware list kept in the sidebar) and `lab/passthrough.html` (the
   route, concept C). `index.html` has **Serial bootloader**, **Debug probe**, and **Console** tabs (`S.tab`,
   `?tab=`), one pane each (`#view`, `#probe-view`, `#console-view`), so the console stays connected across them.
