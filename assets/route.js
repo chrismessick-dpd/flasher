@@ -30,6 +30,12 @@
         '<span class="hop-status' + (n.live ? ' live' : '') + (n.good ? ' good' : '') + '">' + esc(n.status) + '</span></span>';
     });
     h += '</div>';
+    return h + blocks(m) + '</div>';
+  }
+
+  /* The block map and its legend alone (a passthrough system's larger diagram draws its own stops). */
+  function blocks(m) {
+    var h = '';
     if (m.cells && m.cells.length) {
       // One row of segments across the panel; a long image wraps into rows of at most 96.
       var n = m.cells.length, cols = Math.min(n, 96), gap = n > 96 ? 1 : n > 48 ? 2 : 3;
@@ -37,7 +43,7 @@
         m.cells.map(function (s) { return '<i class="fl-blk ' + s + '"></i>'; }).join('') + '</div>';
       if (m.legend) h += '<div class="fl-legend"><b class="fl-legend-label">' + esc(m.legendLabel || 'Flash block status:') + '</b>' + m.legend.map(function (l) { return '<span><i class="fl-blk ' + l[0] + '"></i>' + esc(l[1]) + '</span>'; }).join('') + '</div>';
     }
-    return h + '</div>';
+    return h;
   }
 
   /* n cells for a fraction of the work done in each of three passes (erase, write, verify). */
@@ -53,5 +59,5 @@
     return out;
   }
 
-  FL.route = { html: html, passes: passes };
+  FL.route = { html: html, blocks: blocks, passes: passes, icons: IC };
 })(window.FL = window.FL || {});

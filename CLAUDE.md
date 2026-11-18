@@ -110,6 +110,25 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   The real display board's layout was written at Chris's OK (`--board-only`, `flasher_data` `7810c80`, proven additive, read
   back: only `units` added to its entry). Not yet tried on the board: a `.hex` from its build with Compare only first.
 
+- **Passthrough systems, slice 1 (2026-11-17, Chris: general passthrough setups instead of custom manifest
+  entries; pushed to `main`).** Design and Chris's decisions: `docs/releases-and-passthrough.md`. *New passthrough
+  system* (FTEs and `?demo`) opens a diagram with clickable Host, Link, and Remote blocks (`systemHtml`,
+  `sysDiagram`, `sysEditor` in `app.js`); a system is a synthesized bridge board (`systemBoard`, `system: true`)
+  plus a `.hex` or `.elf` split after INFO (`fw.split`; `sboot.update`'s `split(info)` and `onInfo`, a `layout`
+  progress phase). The layout comes from `FL.image.layoutFromInfo` and `assets/sectors.js` (F7: 0x449, 0x451,
+  0x452, single-bank only; and the H56x/H57x 0x484, uniform 8 KB sectors either way). INFO's optional `qspiBlock` and `board` are read when present (Chris: yes; the
+  bootloader tweak is his). With no ids, the passthrough is found only by a pick and is used once it answers INFO;
+  its USB id is then kept with the system (`learnPassthrough`). The exit touch now goes only to a port that
+  answered this time (a system) or answered or has the passthrough's id (a manifest board): `FL.sboot.exitAllowed`; `onInfo` runs before the board check, so a wrong board's port still gets it. A passthrough whose id is the knocked host port's, or one of the host's listed ids, is never remembered (`FL.sboot.learnable`). Kept in the browser only (Chris), each system tagged with its account's `tokenTag`, and Sign out forgets them and their files: `flasher.v1.systems`
+  and IndexedDB `flasher-systems`. The host is never flashed by a system (Chris: it stays alive). One remote per
+  system (Chris: not simultaneously). The demo display is now a real STM32F767 single-bank layout (device 0x451, its
+  second sector 32 KB); `demoSystemSim` answers INFO with the new fields and `demoDisplayHex` is its build as a
+  `.hex`. The remote has its own picker (`#sys-file-input`, .hex and .elf). `appEnd` is exclusive, as the bootloader writes it (`BL_APP_END` = flash end). Tests 73 (a test proves the demo `.hex` split from INFO equals the published units and CRCs). Tried in
+  `?demo`: a new system, the demo build, the first pick, 4 of 24 blocks written, a second run with no pick, a reopen
+  from the sidebar with its file restored, 375 px, and the manifest display unchanged. Not tried on hardware.
+  The Signoff side (FW releases as a firmware source, PL and Loom) is the session *Signoff integration for Flasher
+  passthrough systems*.
+
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:
@@ -188,7 +207,7 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
 
 1. Run `python tools/stamp_version.py`.
 2. Serve the tools folder with preview `signoff-suite-alt` (port 8774), and open
-   `flasher/tests/test.html`. It should show PASS (55 tests as of 2026-11-10).
+   `flasher/tests/test.html`. It should show PASS (73 tests as of 2026-11-17).
 3. Run `python tests/test_publish.py` (24 tests), and open `flasher/tests/probe.html` (PASS, 36 tests).
 4. Check `flasher/index.html?demo` and flash something: the simulated flash takes about 5 s.
 5. In the browser pane, scripts are cached: fetch changed files with `{cache: 'reload'}` before

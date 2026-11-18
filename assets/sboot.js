@@ -186,7 +186,11 @@
     return {
       protocol: b[0], reason: b[1], version: rd16(b, 2), device: rd16(b, 4), singleBank: !!b[6], record: b[7], maxData: rd16(b, 8),
       appBase: rd32(b, 12), appEnd: rd32(b, 16), qspiBase: rd32(b, 20), qspiSize: rd32(b, 24),
-      uid: [rd32(b, 28), rd32(b, 32), rd32(b, 36)].map(function (w) { return w.toString(16).toUpperCase().padStart(8, '0'); }).join('')
+      uid: [rd32(b, 28), rd32(b, 32), rd32(b, 36)].map(function (w) { return w.toString(16).toUpperCase().padStart(8, '0'); }).join(''),
+      // Added within protocol 1 (docs/releases-and-passthrough.md): read only when the answer is long enough,
+      // so an older bootloader still works. qspiBlock: the external flash erase block (0 = unknown). board: an id.
+      qspiBlock: b.length >= 44 ? rd32(b, 40) : 0,
+      board: b.length >= 60 ? String.fromCharCode.apply(null, b.subarray(44, 60)).replace(/\0[\s\S]*$/, '').replace(/[^\x20-\x7E]/g, '') : ''
     };
   };
   Bootloader.prototype.crc = async function (addr, len) { return rd32(await this.call(CMD.CRC, le32(addr).concat(le32(len)), 5000), 0); };
@@ -231,8 +235,17 @@
     var info = await waitInfo(bl, opts.waitMs || 10000);
     log('Bootloader ' + (info.version >> 8) + '.' + (info.version & 0xFF) + ', protocol ' + info.protocol + ', chip ' + hex(info.device, 3) +
       ', ' + (RECORD_TEXT[info.record] || 'record ' + info.record) + '. Waiting because ' + (REASON[info.reason] || 'reason ' + info.reason) + '.');
+    // Before the check: a port that answered is the passthrough even when it's the wrong board, so it still gets
+    // the exit touch that sends the host back to its own firmware.
+    if (opts.onInfo) opts.onInfo(info);
     var bad = mismatch(info, opts.expect || {});
     if (bad.length) throw BootError('This isn’t the board this firmware is for: ' + bad.join('; ') + '.', 'wrong');
+    // A file for a board whose layout comes from the board itself: split it now, before anything is compared
+    // (opts.split(info) returns { units, parts, commit }, FL.image.unitsImage's shape, or throws a reason).
+    if (!image.units && opts.split) {
+      try { image = opts.split(info); } catch (e) { throw BootError(e.message, 'layout'); }
+      progress({ phase: 'layout', done: 1, total: 1, units: image.units });
+    }
 
     if (opts.fastBaud && opts.fastBaud !== link.baud) {
       // Answered at the old rate, then switched. Before BEGIN, so a failed switch changes nothing.
@@ -302,7 +315,24 @@
     return out;
   }
 
-  FL.sboot = {
+  /* Whether a port may be sent the exit touch (a 1200-baud open, which resets many USB-serial boards into their
+     bootloaders). A passthrough system's port only once it answered INFO this time: its remembered USB id could be
+     the host's own. A manifest board's port also when it has the passthrough's USB id. */
+  function exitAllowed(o) {
+    if (o.answered) return true;
+    if (o.system || !o.bridge || !o.portInfo) return false;
+    return o.portInfo.usbVendorId === o.bridge.vid && o.portInfo.usbProductId === o.bridge.pid;
+  }
+  /* Whether a port that answered INFO may be remembered as a system's passthrough: never with the USB id of the host
+     port that was knocked, or of the host ids the system lists, or a later run would knock and exit the host itself. */
+  function learnable(portInfo, hostInfo, hostIds) {
+    if (!portInfo || portInfo.usbVendorId == null) return false;
+    var same = function (v, p) { return portInfo.usbVendorId === v && portInfo.usbProductId === p; };
+    if (hostInfo && same(hostInfo.usbVendorId, hostInfo.usbProductId)) return false;
+    return !(hostIds || []).some(function (h) { return same(h.vid, h.pid); });
+  }
+
+  FL.sboot = { exitAllowed: exitAllowed, learnable: learnable,
     crc32: crc32, frame: frame, Rx: Rx, Link: Link, Bootloader: Bootloader, update: update, waitInfo: waitInfo, mismatch: mismatch,
     CMD: CMD, STATUS: STATUS, RECORD: RECORD, REQ: REQ, RSP: RSP, MAX_DATA: MAX_DATA, PROTOCOL: PROTOCOL, le32: le32, rd32: rd32, hex: hex
   };

@@ -87,11 +87,11 @@
         notes: 'The Main PCBA (Signoff EE board pdemo7). Its USB-C port is the one by the terminal blocks.'
       },
       'tstat-display': {
-        kind: 'bridge', name: 'Display & Sensor Board', mcu: 'STM32F7 (made up for the demo)', project: 'thermostat',
+        kind: 'bridge', name: 'Display & Sensor Board', mcu: 'STM32F767 (single-bank)', project: 'thermostat',
         touch: [{ vid: '0x0483', pid: '0x5740', name: 'Acme Thermostat' }], touchBaud: 2400, exitBaud: 1200,
         bridge: { vid: '0x0483', pid: '0x5742', name: 'Acme Thermostat passthrough' }, linkBaud: 1000000, fastBaud: 4000000,
-        expect: { device: '0x4A5', appBase: '0x08010000', qspiBase: '0x70000000', singleBank: true },
-        units: { regions: [{ base: '0x08010000', sizes: ['0x8000', '0x10000'], app: true }, { base: '0x70000000', end: '0x70160000', unit: '0x10000' }] },
+        expect: { device: '0x451', appBase: '0x08010000', qspiBase: '0x70000000', singleBank: true },
+        units: { regions: [{ base: '0x08010000', sizes: ['0x8000', '0x8000'], app: true }, { base: '0x70000000', end: '0x70160000', unit: '0x10000' }] },
         notes: 'The Display & Sensor Board (Signoff EE board pdemo11) has no USB port of its own. Flasher reaches its bootloader through the Main PCBA’s USB-C port, which passes the link through.'
       }
     },
@@ -119,9 +119,13 @@
     ]
   };
 
-  /* The demo display's image as erase units: two internal flash sectors of code, then pictures and
-     fonts in 64 KB external flash blocks, each unit filled with 0xFF past its data. */
-  var DEMO_DISPLAY = { internal: [[0x08010000, 0x8000, 0x7A40], [0x08018000, 0x10000, 0x0E200]], qspi: [0x70000000, 0x10000, 22, 0x7C20] };
+  /* The demo display's image as erase units: two 32 KB internal flash sectors of code (an STM32F767's
+     single-bank sectors 2 and 3, the bootloader in 0 and 1), then pictures and fonts in 64 KB external flash
+     blocks, each unit filled with 0xFF past its data. */
+  var DEMO_DISPLAY = { internal: [[0x08010000, 0x8000, 0x7A40], [0x08018000, 0x8000, 0x7E00]], qspi: [0x70000000, 0x10000, 22, 0x7C20] };
+  // The display's bootloader as a passthrough system meets it (its INFO): a real chip, so the layout comes from it.
+  var DEMO_INFO = { device: 0x451, appBase: 0x08010000, appEnd: 0x08200000, qspiBase: 0x70000000, qspiSize: 0x1000000, qspiBlock: 0x10000, board: 'tstat-display' };
+  var DEMO_PASSTHROUGH = { vid: 0x0483, pid: 0x5742 };
   function demoUnits(seed, older) {
     var r = prng(seed), out = [];
     function unit(addr, size, used) {
@@ -201,6 +205,22 @@
         units.forEach(function (u) { sim.load(u.addr, u.bytes); });
         return sim;
       };
+      // A passthrough system's view of the same board (no manifest entry): every erase unit of an STM32F767
+      // single-bank and 16 MB of external flash, as its INFO describes them, holding the previous release.
+      c.demoSystemSim = function (id, baud) {
+        var info = Object.assign({ singleBank: true }, DEMO_INFO), units = demoUnits(DEMO_MANIFEST.firmware.filter(function (f) { return f.id === id; })[0].seed, true);
+        var sim = FL.fakebridge.display(Object.assign({ units: I.layoutUnits(I.layoutFromInfo(info)), latency: 1, eraseMs: 12, bootMs: 250, baud: baud || 1000000 }, DEMO_INFO));
+        units.forEach(function (u) { sim.load(u.addr, u.bytes); });
+        return sim;
+      };
+      // The display's current release as the .hex its build writes (only the bytes it uses, not the 0xFF fill).
+      c.demoDisplayHex = function () {
+        var f = DEMO_MANIFEST.firmware.filter(function (x) { return x.board === 'tstat-display'; })[0];
+        var used = {}; DEMO_DISPLAY.internal.forEach(function (u) { used[u[0]] = u[2]; });
+        for (var k = 0; k < DEMO_DISPLAY.qspi[2]; k++) used[DEMO_DISPLAY.qspi[0] + k * DEMO_DISPLAY.qspi[1]] = k === DEMO_DISPLAY.qspi[2] - 1 ? DEMO_DISPLAY.qspi[3] : DEMO_DISPLAY.qspi[1];
+        return FL.files.toHex(demoUnits(f.seed).map(function (u) { return { addr: u.addr, data: u.bytes.subarray(0, used[u.addr]) }; }));
+      };
+      c.DEMO_PASSTHROUGH = DEMO_PASSTHROUGH;
       return c;
     });
   }

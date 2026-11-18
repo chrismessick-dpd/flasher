@@ -87,6 +87,22 @@ updates it as above, Compare only included. It needs the board's `units` layout 
 for these boards: it has no addresses, and their image spans more than one memory. The file must hold the
 application from its region's base, since COMMIT covers it.
 
+**Passthrough systems** (FTEs and `?demo`; `docs/releases-and-passthrough.md`) need no manifest entry at all.
+*New passthrough system* in the sidebar opens a diagram of this computer, the **host** (the bridge), the
+**link**, and the **remote**; click a block to set it up. The host keeps running its own firmware with the
+passthrough, and its USB ids are optional (they only narrow Chrome's list). The link takes the protocol's rates
+(knock 2400, link 1 Mbaud, fast 4 Mbaud, exit 1200). The remote takes a `.hex` or `.elf`. When its bootloader
+answers INFO, Flasher works out its erase units from the chip's sector table (`assets/sectors.js`, the STM32F7
+family and the H56x/H57x so far) and INFO's application and external flash regions (`FL.image.layoutFromInfo`), splits the file,
+and updates it as above. The first time, Chrome's second list is unfiltered: pick the port that appeared after the
+knock. Flasher uses it only once it answers INFO, remembers its USB id with the system, and sends the exit touch
+only to a port that answered (a 1200-baud open resets many boards). Systems are kept in this browser: the list in
+localStorage (`flasher.v1.systems`), each remote's file in IndexedDB (`flasher-systems`).
+
+INFO may be longer than its 40 bytes, within protocol 1: `qspiBlock` (u32 at offset 40, the external flash erase
+block; 0 = unknown, and Flasher assumes 64 KB) and `board` (16 ASCII bytes at offset 44, NUL-padded). Older pages
+ignore them; with an older bootloader, Flasher assumes 64 KB blocks and says so in the log.
+
 The protocol is Dovetail's serial bootloader protocol 1: frames of `55 A5 | cmd | seq | len16 |
 payload | crc32` (responses `5A C3`, `cmd | 0x80`, a status byte first), zlib's CRC-32 over
 everything after the sync. A response to an older request is read past; only a timeout or a

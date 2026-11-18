@@ -138,6 +138,39 @@
     return { regions: regions, skip: skip };
   }
 
+  /* A board's erase-unit layout worked out from its bootloader's INFO (assets/sboot.js) and the chip's sector
+     table (assets/sectors.js), in unitLayout's shape: the internal sectors from appBase to appEnd (the region
+     COMMIT covers), the external flash in its erase block (INFO's qspiBlock, else 64 KB), and everything from the
+     start of flash up to appBase skipped (the bootloader's own sectors). Throws with a reason. */
+  var QSPI_BLOCK = 0x10000;
+  function layoutFromInfo(info) {
+    var S = FL.sectors, secs = S && S.sectors(info.device, info.singleBank), c = S && S.chip(info.device);
+    if (!secs) {
+      if (c && !info.singleBank) throw new Error('The board’s flash is in dual-bank mode. Flasher works out sectors only in single-bank mode, which the bootloader expects.');
+      throw new Error('Flasher doesn’t know the sectors of this chip (device ' + hex(info.device, 3) + ') yet.');
+    }
+    var lo = info.appBase >>> 0, hi = info.appEnd >>> 0, i0 = -1, i1 = -1;
+    secs.forEach(function (s, i) { if (s[0] === lo) i0 = i; if (s[0] + s[1] === hi) i1 = i; });
+    if (i0 < 0) throw new Error('The bootloader says the application starts at ' + hex(lo) + ', which isn’t the start of a sector on ' + c.name + '.');
+    if (i1 < i0) throw new Error('The bootloader says the application ends at ' + hex(hi) + ', which isn’t the end of a sector after ' + hex(lo) + ' on ' + c.name + '.');
+    var regions = [{ lo: lo, hi: hi, starts: secs.slice(i0, i1 + 1), unit: 0, app: true }];
+    if (info.qspiSize > 0) {
+      var block = info.qspiBlock > 0 ? info.qspiBlock : QSPI_BLOCK, qlo = info.qspiBase >>> 0;
+      if (info.qspiSize % block) throw new Error('The external flash size (' + fmtBytes(info.qspiSize) + ') isn’t a whole number of ' + fmtBytes(block) + ' blocks.');
+      regions.push({ lo: qlo, hi: qlo + info.qspiSize, starts: null, unit: block, app: false });
+    }
+    return { regions: regions, skip: lo > c.base ? [[c.base, lo]] : [], chip: c.name, qspiBlockGuessed: info.qspiSize > 0 && !(info.qspiBlock > 0) };
+  }
+  /* Every erase unit of a layout, [{ addr, size }] (the simulated board in tests and ?demo). */
+  function layoutUnits(layout) {
+    var out = [];
+    layout.regions.forEach(function (r) {
+      if (r.starts) r.starts.forEach(function (s) { out.push({ addr: s[0], size: s[1] }); });
+      else for (var a = r.lo; a < r.hi; a += r.unit) out.push({ addr: a, size: r.unit });
+    });
+    return out;
+  }
+
   /* A file's segments ({ addr, data }) as the board's erase units, exactly as publish.py's split_units and
      units_entry make them: each unit the image touches, filled with 0xFF and the image laid over it, its CRC-32,
      the units grouped into parts within 1 MB windows, and the COMMIT record over the application's units, which
@@ -263,5 +296,5 @@
     notes: 'No checks beyond “is this firmware”: the flash size comes from the board once it’s connected. Flasher tries a 1200-baud restart on the serial port picked; without an answer, the board goes into update mode by hand.'
   }, []);
 
-  FL.image = { unitLayout: unitLayout, unitsImage: unitsImage, check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
+  FL.image = { unitLayout: unitLayout, layoutFromInfo: layoutFromInfo, layoutUnits: layoutUnits, unitsImage: unitsImage, check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
 })(window.FL = window.FL || {});

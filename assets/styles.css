@@ -224,6 +224,51 @@
   .fl-chain .hop-text { white-space: normal; }
 }
 
+/* ── Passthrough systems: the larger diagram whose host, link, and remote are clickable blocks ── */
+.fl-sys-row .fl-proj-icon { background: var(--bg-sunk); color: var(--text-2); }
+.fl-sys-title { display: block; width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); padding: 0 6px; margin-left: -7px; }
+.fl-sys-title:hover:not(:disabled), .fl-sys-title:focus { border-color: var(--hair-2); outline: none; background: var(--bg-elev); }
+.fl-sys-card { padding: 18px 20px; }
+.fl-sys { container-type: inline-size; }
+.fl-sys-chain { display: flex; align-items: stretch; gap: 0; }
+.fl-sys-pc, .fl-sys-block { display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left; border-radius: 14px; padding: 14px 16px; }
+.fl-sys-pc { flex: 0 1 150px; background: var(--bg-sunk); color: var(--text-2); }
+.fl-sys-block { flex: 1 1 0; font: inherit; color: var(--text-2); background: var(--bg-sunk); border: 2px dashed var(--hair-2); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.fl-sys-block:hover { border-color: var(--accent-soft); }
+.fl-sys-block.on { color: var(--text); border-style: solid; border-color: var(--accent-soft); }
+.fl-sys-block.sel { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.fl-sys-block:focus-visible, .fl-sys-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fl-sys-kick { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
+.fl-sys-kick svg { width: 20px; height: 20px; flex: none; }
+.fl-sys-name { font-size: 19px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fl-sys-sub { font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
+.fl-sys-status { font-size: 13.5px; color: var(--text-3); margin-top: 2px; }
+.fl-sys-status.live { color: var(--accent-ink); font-weight: 600; }
+.fl-sys-status.good { color: var(--pass); font-weight: 600; }
+.fl-sys-status.good::before { content: '✓ '; }
+:root[data-theme="dark"] .fl-sys-status.live { color: #5fd0dc; }
+.fl-sys-wire { flex: 0 1 120px; min-width: 40px; position: relative; display: flex; align-items: center; justify-content: center; }
+.fl-sys-wire::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--hair-2); overflow: hidden; }
+.fl-sys-wire.on::before { background: var(--accent-soft); }
+.fl-sys-wire.on::after { content: ''; position: absolute; top: 50%; height: 3px; margin-top: -1.5px; width: 14px; border-radius: 2px; background: var(--accent); animation: fl-run 1.1s linear infinite; }
+.fl-sys-wire-label { position: relative; font-size: 11.5px; font-weight: 600; color: var(--text-3); background: var(--bg-elev); padding: 1px 6px; border-radius: 6px; }
+.fl-sys-link { position: relative; z-index: 1; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-2); background: var(--bg-elev); border: 2px dashed var(--hair-2); border-radius: 999px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.fl-sys-link:hover { border-color: var(--accent-soft); }
+.fl-sys-link.sel { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.fl-sys-edit-title { font-size: 15px; font-weight: 650; margin: 0 0 6px; }
+.fl-sys-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; margin-top: 10px; }
+.fl-sys-file { margin: 0; align-items: center; }
+.fl-sys-edit .hint-text { font-size: 12px; color: var(--text-3); margin-top: 5px; }
+@media (prefers-reduced-motion: reduce) { .fl-sys-wire.on::after { animation: none; } }
+/* Too narrow for the blocks side by side: they stack, the wires running down. */
+@container (max-width: 760px) {
+  .fl-sys-chain { flex-direction: column; }
+  .fl-sys-pc, .fl-sys-block { flex: none; }
+  .fl-sys-wire { flex: none; height: 34px; min-width: 0; }
+  .fl-sys-wire::before { left: 50%; right: auto; top: 0; bottom: 0; width: 3px; height: auto; margin: 0 0 0 -1.5px; }
+  .fl-sys-wire.on::after { left: 50%; top: 0; width: 3px; height: 8px; margin: 0 0 0 -1.5px; animation-name: fl-run-down; }
+}
+
 /* ── Console tab: any serial port, a real terminal filling the page ── */
 .fl-con-page { display: flex; flex-direction: column; height: calc(100vh - 56px); min-height: 360px; }
 body.has-banner .fl-con-page { height: calc(100vh - 56px - 34px); }

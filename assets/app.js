@@ -57,6 +57,7 @@
       var f = S.catalog.firmware.filter(function (x) { return x.id + '@' + x.board === S.fwId; })[0];
       return f ? { fw: f, board: boards()[f.board] } : null;
     }
+    if (S.view === 'system' && S.sys) return { fw: systemFw(), board: systemBoard(S.sys.sys) };
     if (S.view === 'local' && S.local) {
       var b = boards()[S.local.boardId] || I.GENERIC;
       if (b.kind === 'bridge') return { fw: localUnits(b), board: b };
@@ -154,10 +155,11 @@
     renderAccount();
     var v = $('#view'), c = current();
     if ((S.view === 'fw' || S.view === 'local') && !c) S.view = 'home';
+    if (S.view === 'system' && (!S.sys || (!S.loading && !systemsOn()))) S.view = 'home';
     if (S.view === 'people' && !S.loading && !(S.catalog && S.catalog.fte)) S.view = 'home';
     renderTabs();
     if (S.loading && linked) return;   // keep ?fw= in the address until the list is here
-    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : fwHtml(current());
+    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : S.view === 'system' ? systemHtml(current()) : fwHtml(current());
     if (S.tab === 'console') renderConsole();
     // The probe draws itself; it's redrawn here only when its tab opens, so a sync or a fetch finishing
     // never wipes what's typed in its fields.
@@ -236,7 +238,7 @@
       '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
       '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
       esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, .hex, or .elf; or drop it here') + '</span></span></button>';
-    list.innerHTML = fileRow + h;
+    list.innerHTML = fileRow + systemRows() + h;
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
   }
@@ -424,11 +426,12 @@
       legend: [['unk', 'Not written yet'], ['erased', 'Erased'], ['diff', 'Written'], ['done', 'Read back and checked']]
     });
   }
-  function bridgeRoute(c, run) {
-    var b = c.board, units = c.fw.units || [];
+  function bridgeRoute(c, run) { return FL.route.html(bridgeModel(c, run)); }
+  function bridgeModel(c, run) {
+    var b = c.board, units = (b.system && S.sys.units) || c.fw.units || [];
     // The host by its board's name when the manifest has that board (its firmware's USB id), else by its port's.
     var bs = boards(), hostId = Object.keys(bs).filter(function (id) { return bs[id].kind !== 'bridge' && (bs[id].runs || []).some(function (r) { return b.runs.some(function (t) { return t.vid === r.vid && t.pid === r.pid; }); }); })[0];
-    var host = hostId ? bs[hostId].name : FL.serial.portNames(b.runs, 'The host board');
+    var host = b.hostName || (hostId ? bs[hostId].name : FL.serial.portNames(b.runs, 'The host board'));
     var ph = !run ? 'idle' : run.ok ? 'done' : run.error ? 'stopped' : run.waitPick ? 'pick' : run.step === 'restart' ? 'knock' : run.step === 'start' ? 'leave' : 'pass';
     var st = {
       idle: ['Ready', 'Its own firmware', 'Its own firmware · no USB'],
@@ -444,8 +447,8 @@
     if (run && run.ok && !run.compareOnly) cells = cells.map(function (s) { return s === 'unk' ? 'same' : s === 'diff' || s === 'now' ? 'done' : s; });
     var n = run && run.cells ? run.cells.filter(function (s) { return s === 'diff' || s === 'now' || s === 'done'; }).length : 0;
     var note = run && run.busy && run.phase ? run.phase : run && run.ok && run.result ? (run.result.changed.length ? run.result.changed.length + ' of ' + units.length + ' blocks ' + (run.compareOnly ? 'differ' : 'rewritten') : 'Already up to date') :
-      units.length + ' blocks, ' + I.fmtBytes(c.fw.size);
-    return FL.route.html({
+      units.length ? units.length + ' blocks, ' + I.fmtBytes(c.fw.size) : c.fw.split ? 'The blocks come from the board: its bootloader says what its flash is' : I.fmtBytes(c.fw.size);
+    return ({
       nodes: [{ icon: 'pc', name: 'This computer', status: st[0], on: true, live: usb, good: ph === 'done' },
         { icon: 'host', name: host, status: st[1], on: usb || uart, live: uart || ph === 'knock' },
         { icon: 'target', name: b.name, status: st[2], on: uart || ph === 'done', live: uart, good: ph === 'done' && !run.compareOnly }],
@@ -773,7 +776,7 @@
   function drawProgress() {
     var box = $('#fl-route-box'), c = current();
     if (!box || !c) return upd();
-    box.innerHTML = c.board.kind === 'bridge' ? bridgeRoute(c, S.run) : directRoute(c, S.run);
+    box.innerHTML = c.board.system ? sysDiagram(c, S.run) : c.board.kind === 'bridge' ? bridgeRoute(c, S.run) : directRoute(c, S.run);
     renderTabs();
   }
 
@@ -822,29 +825,34 @@
   //    CRC and writes only those that differ. 3. GO starts the new firmware, and opening the
   //    passthrough at exitBaud sends the host back to its own firmware.
   var BRIDGE_TAB = 'Update through passthrough';
-  var demoBridge = { up: false, sim: null, port: null };
-  function bridgeKeyOf(b) { return (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'bridgeOk.' + b.bridge.vid + ':' + b.bridge.pid; }
+  var demoBridge = { up: false, ports: {} };   // up: the demo host's passthrough is open; ports: each board's simulated one
+  // A passthrough system's port is remembered by the system (its USB id is learned when it first answers INFO).
+  function bridgeKeyOf(b) { return (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'bridgeOk.' + (b.system ? b.id : b.bridge.vid + ':' + b.bridge.pid); }
   function bridgeKnown(b) { try { return localStorage.getItem(bridgeKeyOf(b)) === '1'; } catch (e) { return false; } }
   function bridgeSeen(b) { try { localStorage.setItem(bridgeKeyOf(b), '1'); } catch (e) { /* storage blocked */ } }
   function demoBridgePort(c) {
     var b = c.board;
-    if (!demoBridge.sim) {
-      // A file from this computer holds no demo id: the simulated board starts from that board's published release.
-      var simId = c.fw.local ? (S.catalog.firmware.filter(function (f) { return f.board === b.id; })[0] || {}).id : c.fw.id;
-      var sim = demoBridge.sim = S.catalog.demoDisplay(simId);
-      demoBridge.port = FL.fakebridge.port(sim, { vid: b.bridge.vid, pid: b.bridge.pid, exitBaud: b.exitBaud, onExit: function () {
+    if (!demoBridge.ports[b.id]) {
+      // A passthrough system reaches the demo display as a real chip would answer (its layout from INFO). A file from
+      // this computer holds no demo id: the simulated board starts from that board's published release.
+      var simId = c.fw.local ? (S.catalog.firmware.filter(function (f) { return f.board === (b.system ? 'tstat-display' : b.id); })[0] || {}).id : c.fw.id;
+      var sim = b.system ? S.catalog.demoSystemSim(simId, b.linkBaud) : S.catalog.demoDisplay(simId);
+      var ids = b.system ? S.catalog.DEMO_PASSTHROUGH : b.bridge;
+      demoBridge.ports[b.id] = FL.fakebridge.port(sim, { vid: ids.vid, pid: ids.pid, exitBaud: b.exitBaud, onExit: function () {
         demoBridge.up = false;
         // The host restarts the display into its own firmware; the next passthrough boots it again.
         setTimeout(function () { sim.running = false; sim.booted = false; sim.begun = false; sim.baud = b.linkBaud; }, 0);
       } });
     }
-    return demoBridge.port;
+    return demoBridge.ports[b.id];
   }
   function findBridge(c) {
     var b = c.board;
     // In the demo, as in Chrome, the page sees the passthrough only once it has been picked.
     if (DEMO) return Promise.resolve(demoBridge.up && bridgeKnown(b) ? demoBridgePort(c) : null);
     if (!navigator.serial) return Promise.resolve(null);
+    // With no USB id (a passthrough system that hasn't answered yet), only a pick finds it: Flasher never probes ports.
+    if (!b.bridge) return Promise.resolve(null);
     return navigator.serial.getPorts().then(function (ports) {
       return ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.bridge); })[0] || null;
     });
@@ -865,15 +873,16 @@
   }
 
   function bridgeHtml(c, run) {
-    var b = c.board, busy = run && run.busy, host = FL.serial.portNames(b.runs, 'the host board'), via = b.bridge.name || 'the passthrough';
-    var h = '<div id="fl-route-box">' + bridgeRoute(c, run) + '</div><div class="fl-flash">';
+    var b = c.board, busy = run && run.busy, host = b.hostName || FL.serial.portNames(b.runs, 'the host board'), via = (b.bridge && b.bridge.name) || 'the passthrough';
+    var h = (b.system ? '' : '<div id="fl-route-box">' + bridgeRoute(c, run) + '</div>') + '<div class="fl-flash">';
     h += '<p class="fl-intro">This board has no USB port of its own. Plug in the board it’s connected to (Chrome lists it as <b>' + esc(host) + '</b>) and click <b>Update board</b>. ' +
       'Flasher reaches this board’s bootloader through it, compares every block, and writes only the ones that differ. <b>Compare only</b> changes nothing.</p>';
     h += '<ol class="fl-steps">';
     h += '<li class="fl-step ' + bridgeState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Open the passthrough</div>' +
       '<div class="fl-step-sub">Flasher asks ' + esc(host) + ' to pass its USB through to this board. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(host) + '</b> and click <b>Connect</b>. It refuses while its output is on.</div></div></li>';
     h += '<li class="fl-step ' + bridgeState(run, 'connect') + '"><span class="fl-num">2</span><div><div class="fl-step-title">Connect to the bootloader</div>' +
-      '<div class="fl-step-sub"><i>First time:</i> Chrome shows a second list. Pick <b>' + esc(via) + '</b> and click <b>Connect</b>.</div></div></li>';
+      '<div class="fl-step-sub"><i>First time:</i> Chrome shows a second list. Pick <b>' + esc(via) + '</b>' + (b.bridge ? '' : ', the port that appeared after step 1,') + ' and click <b>Connect</b>.' +
+      (b.system ? ' Flasher checks it answers as a bootloader before using it, and remembers it.' : '') + '</div></div></li>';
     h += '<li class="fl-step ' + bridgeState(run, 'write') + '"><span class="fl-num">3</span><div><div class="fl-step-title">' + (run && run.compareOnly ? 'Compare' : 'Compare and write') + '</div>' +
       '<div class="fl-step-sub">Every block’s checksum is compared with the board’s; the ones that differ are erased, written, and read back.</div>' +
       '</div></li>';
@@ -884,7 +893,8 @@
     if (run && run.ok) h += '<div class="hint fl-good"><b>' + esc(run.doneTitle) + '</b>' + esc(run.doneText) + '</div>';
     h += '<div class="fl-row">';
     if (c.fw.error) h += '<div class="hint fl-bad"><b>This file can’t be written to ' + esc(b.name) + '</b>' + esc(c.fw.error) + '</div>';
-    var blocked = (!DEMO && !navigator.serial) || !(c.fw.units && c.fw.units.length);
+    // A file split once the board answers (fw.split) is ready as soon as it's picked.
+    var blocked = (!DEMO && !navigator.serial) || !!c.fw.error || !(c.fw.split || (c.fw.units && c.fw.units.length));
     if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-bridge">Pick ' + esc(via) + '</button>';
     else {
       h += '<button class="btn btn-primary" data-act="bridge-update"' + (busy || blocked ? ' disabled' : '') + '>' + (busy && !run.compareOnly ? 'Updating…' : run && run.ok && !run.compareOnly ? 'Update again' : 'Update board') + '</button>';
@@ -894,7 +904,7 @@
     if (run && run.log.length) h += '<details class="fl-log"' + (run.error ? ' open' : '') + '><summary>Details</summary><div class="log">' + run.log.map(function (l) { return '<div class="' + (l.cls || '') + '">' + esc(l.text) + '</div>'; }).join('') + '</div></details>';
     h += '<details class="guide fl-manual"><summary>Not in Chrome’s list?</summary><p>Close any other program using ' + esc(host) + '’s serial port (a terminal, the Arduino IDE’s Serial Monitor, another Flasher tab), and try another USB cable. ' +
       'If ' + esc(host) + ' isn’t running firmware that has the passthrough, flash that first.</p>' +
-      '<p class="fl-muted">For the curious: the passthrough is ' + esc(host) + '’s USB serial port reopened as a pipe onto this board’s bootloader (USB ' + hex4(b.bridge.vid) + ':' + hex4(b.bridge.pid) + '). ' +
+      '<p class="fl-muted">For the curious: the passthrough is ' + esc(host) + '’s USB serial port reopened as a pipe onto this board’s bootloader' + (b.bridge ? ' (USB ' + hex4(b.bridge.vid) + ':' + hex4(b.bridge.pid) + ')' : '') + '. ' +
       'An interrupted update is safe: this board waits in its bootloader until an update finishes, so run it again.</p></details>';
     return h + '</div>';
   }
@@ -902,7 +912,8 @@
   function startBridge(compareOnly) {
     var c = current();
     if (!c || c.board.kind !== 'bridge' || (S.run && S.run.busy)) return;
-    var b = c.board, host = FL.serial.portNames(b.runs, 'the host board');
+    var b = c.board, host = b.hostName || FL.serial.portNames(b.runs, 'the host board');
+    if (c.fw.error) return;
     S.run = { key: runKey(), busy: true, step: 'restart', log: [], pct: 0, phase: '', t0: Date.now(), compareOnly: !!compareOnly };
     var closing = pauseConsoleFor(b);
     upd();
@@ -912,10 +923,13 @@
         // None picked: the passthrough may already be open (a cancelled pick, a page reloaded mid-way),
         // and then only its own list finds it.
         if (!hostPort) { log('No ' + host + ' was picked; it may already have its passthrough open.'); return null; }
+        S.run.hostInfo = hostPort.getInfo ? hostPort.getInfo() : null;   // never to be taken for the passthrough
         log('Asking ' + host + ' to open its passthrough (' + b.touchBaud + '-baud touch)…');
         return FL.serial.touch(hostPort, { baud: b.touchBaud }).then(function () {
           if (DEMO) setTimeout(function () { demoBridge.up = true; }, 600);
           log('Waiting for the passthrough port…');
+          // A system's passthrough that hasn't answered yet has no id to look for: straight to the pick.
+          if (b.system && !b.bridge && !(DEMO && bridgeKnown(b))) return null;
           return waitBridge(c, bridgeKnown(b) ? 15000 : 5000);
         });
       }).then(function (p2) {
@@ -923,7 +937,7 @@
         // Not found: this browser hasn't been allowed the passthrough port yet (its list needs a fresh
         // click), or the host didn't open it. Chrome's list tells which.
         S.run.busy = false; S.run.waitPick = true; S.run.step = 'connect';
-        log('Click “Pick ' + (b.bridge.name || 'the passthrough') + '” and choose it. If Chrome’s list is empty, ' + host + ' didn’t open it: it refuses while its output is on.');
+        log('Click “Pick ' + ((b.bridge && b.bridge.name) || 'the passthrough') + '” and choose it. If Chrome’s list is empty, ' + host + ' didn’t open it: it refuses while its output is on.');
         upd(); return null;
       });
     }).then(function (port) { if (port) return runBridge(port, c); }).catch(function (e) { stopBridge(e, c); });
@@ -934,7 +948,7 @@
     var b = c.board;
     S.run.busy = true; S.run.waitPick = false; upd();
     var got = DEMO ? Promise.resolve(demoBridge.up ? demoBridgePort(c) : null)
-      : navigator.serial.requestPort({ filters: FL.serial.filters(b.bridge) }).catch(function (e) { if (e && e.name === 'NotFoundError') return null; throw e; });
+      : navigator.serial.requestPort(b.bridge ? { filters: FL.serial.filters(b.bridge) } : {}).catch(function (e) { if (e && e.name === 'NotFoundError') return null; throw e; });
     got.then(function (port) {
       if (!port) throw Object.assign(new Error('No passthrough port was chosen.'), { code: 'nobridge' });
       return runBridge(port, c);
@@ -942,14 +956,15 @@
   }
 
   function runBridge(port, c) {
-    var b = c.board, run = S.run, lastDraw = 0, failure = null;
+    var b = c.board, run = S.run, lastDraw = 0, failure = null, answered = false;
     run.busy = true; run.waitPick = false; run.step = 'connect'; run.phase = 'Connecting…'; upd();
-    bridgeSeen(b);
     var link = new FL.sboot.Link(port), units = c.fw.units || [];
     run.cells = units.map(function () { return 'unk'; });
     function unitAt(addr) { for (var i = 0; i < units.length; i++) if (addr >= units[i].addr && addr < units[i].addr + units[i].size) return i; return -1; }
     function progress(p) {
       if (p.phase === 'connect') return;
+      // The file was split once the board said what its flash is: now the block map has its blocks.
+      if (p.phase === 'layout') { units = p.units; run.cells = units.map(function () { return 'unk'; }); if (b.system) S.sys.units = units; drawProgress(); return; }
       if (run.step !== 'write') { run.step = 'write'; upd(); }
       var f = p.total ? p.done / p.total : 0;
       // The block map: each block as it's compared, then written, then read back.
@@ -966,9 +981,23 @@
       var now = Date.now(); if (now - lastDraw > 80 || p.done === p.total) { lastDraw = now; drawProgress(); }
     }
     return link.open(b.linkBaud).then(function () {
-      log('Connected to ' + (b.bridge.name || 'the passthrough') + ' at ' + (b.linkBaud / 1e6) + ' Mbaud.');
-      return FL.sboot.update(link, { units: c.fw.units, parts: c.fw.parts, commit: c.fw.commit }, {
+      log('Connected to ' + ((b.bridge && b.bridge.name) || 'the passthrough') + ' at ' + (b.linkBaud / 1e6) + ' Mbaud.');
+      return FL.sboot.update(link, c.fw.split ? { parts: [] } : { units: c.fw.units, parts: c.fw.parts, commit: c.fw.commit }, {
         expect: b.expect, fastBaud: b.fastBaud, compareOnly: run.compareOnly, log: log, progress: progress,
+        onInfo: function (info) {
+          // Only a port that answered as a bootloader is the passthrough; only it gets the exit touch.
+          answered = true; bridgeSeen(b);
+          if (b.system) learnPassthrough(port, info, run.hostInfo);
+        },
+        split: c.fw.split ? function (info) {
+          var lay = I.layoutFromInfo(info);
+          log('Its flash, from the bootloader: ' + lay.chip + ', application ' + I.hex(info.appBase) + ' to ' + I.hex(info.appEnd) +
+            (info.qspiSize ? ', external flash ' + I.fmtBytes(info.qspiSize) + ' in ' + I.fmtBytes(lay.regions[1].unit) + ' blocks' + (lay.qspiBlockGuessed ? ' (its block size assumed: this bootloader doesn’t report it)' : '') : '') +
+            (info.board ? '; board “' + info.board + '”' : '') + '.');
+          var img = I.unitsImage(c.fw.segments, lay, FL.sboot.crc32);
+          log('Split ' + c.fw.name + ' into ' + img.units.length + ' blocks (' + I.fmtBytes(img.size) + ').');
+          return img;
+        } : null,
         fetchPart: function (part) {
           if (c.fw.local) return Promise.resolve(part.bytes);
           log('Downloading ' + part.path.split('/').pop() + ' (' + I.fmtBytes(part.size) + ')…');
@@ -978,13 +1007,19 @@
     }).then(function (res) { run.result = res; }, function (e) { failure = e; }).then(function () {
       // Always leave the passthrough: the host goes back to its own firmware and restarts this board.
       // After a failed write the board stays in its bootloader until an update finishes.
+      // The exit touch goes only to a port known to be the passthrough (its USB id, or it answered INFO): a 1200-baud
+      // open resets many USB-serial boards into their bootloaders.
       run.step = 'start'; run.phase = 'Leaving the passthrough…'; upd();
+      if (!FL.sboot.exitAllowed({ answered: answered, system: b.system, bridge: b.bridge, portInfo: port.getInfo ? port.getInfo() : null })) {
+        log('That port never answered as a bootloader, so it wasn’t sent the exit touch.');
+        return link.close();
+      }
       return link.close().then(function () {
         return port.open({ baudRate: b.exitBaud }).then(function () { return port.close(); });
       }).catch(function () {}).then(function () { log('Left the passthrough (' + b.exitBaud + '-baud touch).'); });
     }).then(function () {
       if (failure) throw failure;
-      var res = run.result, n = res.changed.length, total = c.fw.units.length;
+      var res = run.result, n = res.changed.length, total = units.length;
       run.busy = false; run.ok = true; run.doneAt = Date.now(); run.ms = run.doneAt - run.t0;
       if (run.compareOnly) {
         run.doneTitle = n ? n + ' of ' + total + ' blocks differ' : 'Already up to date';
@@ -1003,10 +1038,12 @@
   }
 
   function stopBridge(e, c) {
-    var run = S.run, b = c.board, host = FL.serial.portNames(b.runs, 'the host board');
+    var run = S.run, b = c.board, host = b.hostName || FL.serial.portNames(b.runs, 'the host board');
     if (!run) return;
     run.busy = false; run.waitPick = false;
     var msg = (e && e.message) || String(e), code = e && e.code;
+    if (code === 'layout') { run.errorTitle = 'This file doesn’t fit the board'; run.error = msg + ' Nothing on the board was changed.'; log(run.errorTitle + ': ' + msg, 'err'); upd(); resumeConsole(); return; }
+    if (code === 'silent' && b.system && !b.bridge) msg += ' Was that the passthrough? Pick the port that appeared after the knock.';
     run.errorTitle = run.compareOnly ? 'The compare stopped' : 'The update stopped';
     if (code === 'nohost') run.error = msg + ' Plug it in, close any program using its serial port, and try again.';
     else if (code === 'nobridge') {
@@ -1018,6 +1055,232 @@
     log(run.errorTitle + ': ' + msg, 'err');
     upd();
     resumeConsole();
+  }
+
+  // ── Passthrough systems (docs/releases-and-passthrough.md; FTEs and ?demo only) ──
+  // A host board that stays running its own firmware with the passthrough, the link's rates, and a remote board
+  // whose .hex or .elf is split once its bootloader's INFO says what its flash is (FL.image.layoutFromInfo). No
+  // manifest entry. Kept in this browser only (Chris, 2026-11-17): the list in localStorage, each remote's file
+  // in IndexedDB. A system's firmware is a reference, so a project firmware or a Signoff FW release can stand in
+  // for the file later.
+  var SYS_KEY = (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'systems', SYS_DB = DEMO ? 'flasher-demo-systems' : 'flasher-systems';
+  var LINK = { touchBaud: 2400, linkBaud: 1000000, fastBaud: 4000000, exitBaud: 1200 };
+  function systemsOn() { return DEMO || !!(S.catalog && S.catalog.fte); }
+  // Each system names the account it was made with (the engine's tokenTag), so another account signed in here never
+  // sees it; Sign out forgets them all, their files too (forgetSystems).
+  function sysTag() { return DEMO ? 'demo' : tagOf(C.auth.token()); }
+  function allSystems() {
+    try { var l = JSON.parse(localStorage.getItem(SYS_KEY) || '[]'); return Array.isArray(l) ? l.filter(function (x) { return x && x.v === 1 && /^[a-z0-9]{4,24}$/.test(x.id || ''); }) : []; }
+    catch (e) { return []; }
+  }
+  function readSystems() { var t = sysTag(); return t ? allSystems().filter(function (x) { return x.tag === t; }) : []; }
+  function forgetSystems() {
+    try { localStorage.removeItem(SYS_KEY); } catch (e) { /* storage blocked */ }
+    try { indexedDB.deleteDatabase(SYS_DB); } catch (e) { /* blocked */ }
+    if (S.view === 'system') S.view = 'home';
+    S.sys = null;
+  }
+  function storeSystem(sys) {
+    sys.at = Date.now(); sys.tag = sysTag();
+    var list = allSystems().filter(function (x) { return x.id !== sys.id; });
+    list.unshift(sys);
+    try { localStorage.setItem(SYS_KEY, JSON.stringify(list.slice(0, 12))); } catch (e) { /* storage blocked: this visit only */ }
+  }
+  function newSystem() {
+    return { v: 1, id: 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: 'Passthrough system', at: Date.now(),
+      host: { name: '', usb: [] }, link: Object.assign({}, LINK), remote: { name: '', file: null, seen: null }, learned: null };
+  }
+  /* The remote's file bytes, in IndexedDB beside the list (a build can be megabytes). Resolves null when blocked. */
+  function idbFile(op, id, val) {
+    return new Promise(function (resolve) {
+      var req;
+      try { req = indexedDB.open(SYS_DB, 1); } catch (e) { return resolve(null); }
+      req.onupgradeneeded = function () { req.result.createObjectStore('files'); };
+      req.onerror = function () { resolve(null); };
+      req.onsuccess = function () {
+        try {
+          var db = req.result, tx = db.transaction('files', op === 'get' ? 'readonly' : 'readwrite'), st = tx.objectStore('files');
+          var r = op === 'get' ? st.get(id) : op === 'put' ? st.put(val, id) : st.delete(id);
+          r.onsuccess = function () { resolve(op === 'get' ? r.result || null : true); };
+          r.onerror = function () { resolve(null); };
+          tx.oncomplete = function () { db.close(); };
+        } catch (e) { resolve(null); }
+      };
+    });
+  }
+  function relDay(t) { var d = Math.round((Date.now() - t) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago'; }
+  function systemRows() {
+    if (!systemsOn()) return '';
+    var on = S.view === 'system' && S.sys, list = readSystems();
+    var icon = '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="6" height="8" rx="1.3"/><rect x="12.5" y="6" width="6" height="8" rx="1.3"/><path d="M7.5 10h5"/><path d="M10 8.2v3.6"/></svg></span>';
+    var h = '<button class="proj fl-file-row" data-act="sys-new" title="A board reached through another board’s passthrough, from a .hex or .elf">' + icon +
+      '<span class="proj-body"><span class="proj-name">New passthrough system</span><span class="proj-sub">A board behind another board’s passthrough</span></span></button>';
+    list.slice(0, 6).forEach(function (x) {
+      var cur = on && S.sys.sys.id === x.id;
+      h += '<button class="proj fl-sys-row' + (cur ? ' active' : '') + '" data-act="sys-open" data-sys="' + esc(x.id) + '">' + icon +
+        '<span class="proj-body"><span class="proj-name">' + esc(x.name) + '</span><span class="proj-sub">' + esc([x.remote && x.remote.file ? x.remote.file.name : 'No file yet', relDay(x.at)].join(' · ')) + '</span></span></button>';
+    });
+    return h;
+  }
+  function openSystem(id) {
+    if (S.run && S.run.busy) return toast('Wait for the update to finish.');
+    var sys = id ? readSystems().filter(function (x) { return x.id === id; })[0] : null, fresh = !sys;
+    if (!sys) { sys = newSystem(); storeSystem(sys); }
+    S.sys = { sys: sys, file: null, block: fresh ? 'remote' : '', units: null, loading: !!(sys.remote && sys.remote.file) };
+    if (S.tab === 'console') S.tab = 'serial';
+    select('system');
+    if (S.sys.loading) idbFile('get', sys.id).then(function (rec) {
+      if (!S.sys || S.sys.sys.id !== sys.id) return;
+      S.sys.loading = false;
+      if (rec && rec.bytes) return parseSystemFile(rec.name, new Uint8Array(rec.bytes)).then(function (f) { if (S.sys && S.sys.sys.id === sys.id) { S.sys.file = f; render(); } }, function () { render(); });
+      render();
+    });
+  }
+  function systemChanged() { if (S.sys) { storeSystem(S.sys.sys); render(); } }
+  function deleteSystem() {
+    if (!S.sys || (S.run && S.run.busy)) return;
+    if (!confirm('Remove “' + S.sys.sys.name + '” from this browser? Its file is forgotten too; nothing on any board changes.')) return;
+    var id = S.sys.sys.id;
+    try { localStorage.setItem(SYS_KEY, JSON.stringify(allSystems().filter(function (x) { return x.id !== id; }))); } catch (e) { /* storage blocked */ }
+    idbFile('delete', id); S.sys = null; select('home'); toast('Removed');
+  }
+  function parseUsb(text) {
+    var out = [], bad = [];
+    String(text || '').split(/[\s,;]+/).filter(Boolean).forEach(function (t) {
+      var m = /^(?:0x)?([0-9a-f]{1,4}):(?:0x)?([0-9a-f]{1,4})$/i.exec(t);
+      if (m) out.push({ vid: parseInt(m[1], 16), pid: parseInt(m[2], 16) }); else bad.push(t);
+    });
+    return { ids: out.slice(0, 8), bad: bad };
+  }
+  function systemField(k, v) {
+    var sys = S.sys && S.sys.sys; if (!sys) return;
+    if (k === 'name') sys.name = String(v).trim().slice(0, 80) || 'Passthrough system';
+    else if (k === 'host-name') sys.host.name = String(v).trim().slice(0, 80);
+    else if (k === 'host-usb') { var u = parseUsb(v); sys.host.usb = u.ids; if (u.bad.length) toast('Not a USB id: ' + u.bad.join(', ') + '. Use vid:pid in hex, like 0483:5740.'); }
+    else if (k === 'remote-name') sys.remote.name = String(v).trim().slice(0, 80);
+    else if (/^(touch|link|fast|exit)Baud$/.test(k)) {
+      var n = parseInt(v, 10);
+      if (n >= 300 && n <= 12000000) sys.link[k] = n; else toast('A rate from 300 to 12000000 baud.');
+      if (sys.link.touchBaud === sys.link.exitBaud || sys.link.linkBaud === sys.link.exitBaud || sys.link.fastBaud === sys.link.exitBaud) toast('The exit rate must differ from the others, or the host would leave the passthrough.');
+    }
+    S.run = null; systemChanged();
+  }
+  /* A .hex or .elf for the remote: it needs addresses, since the image can span internal and external flash. */
+  function parseSystemFile(name, bytes) {
+    if (/\.bin$/i.test(name)) return Promise.reject(new Error('A .bin has no addresses. Use the .hex or .elf the build makes.'));
+    var img;
+    try { img = FL.files.parse(name, bytes); } catch (e) { return Promise.reject(e); }
+    if (img.needsBase || !img.segments || !img.segments.length) return Promise.reject(new Error('That file has no addresses. Use the .hex or .elf the build makes.'));
+    return I.sha256(bytes).then(function (h) { return { name: name, bytes: bytes, segments: img.segments, sha256: h, size: img.segments.reduce(function (n, sg) { return n + sg.data.length; }, 0) }; });
+  }
+  function setSystemFile(f) {
+    if (!f || !S.sys) return;
+    if (S.run && S.run.busy) return toast('Wait for the update to finish.');
+    if (f.size > 64 * 1048576) return toast('That file is over 64 MB; it isn’t firmware for these boards.');
+    var sys = S.sys.sys;
+    f.arrayBuffer().then(function (buf) { return parseSystemFile(f.name, new Uint8Array(buf)); }).then(function (file) {
+      if (!S.sys || S.sys.sys !== sys) return;
+      S.sys.file = file; S.sys.units = null; S.run = null;
+      sys.remote.file = { name: file.name, sha256: file.sha256, size: file.bytes.length };
+      if (!sys.remote.name) sys.remote.name = file.name.replace(/\.[^.]+$/, '');
+      idbFile('put', sys.id, { name: file.name, bytes: file.bytes }).then(function (ok) { if (!ok) toast('This browser won’t keep the file; open it again next visit.'); });
+      systemChanged();
+    }, function (e) { toast(f.name + ': ' + (e.message || e)); });
+  }
+  /* ?demo: the made-up display's current release as a .hex, as the build would write it. */
+  function demoSystemFile() {
+    var text = S.catalog && S.catalog.demoDisplayHex ? S.catalog.demoDisplayHex() : '';
+    if (!text) return;
+    setSystemFile(new File([text], 'display-1.4.0.hex', { type: 'text/plain' }));
+  }
+  /* The passthrough answered INFO: remember its USB id with the system, so later visits find it without a pick,
+     and what the board said about itself. */
+  function learnPassthrough(port, info, hostInfo) {
+    var sys = S.sys && S.sys.sys, pi = port.getInfo ? port.getInfo() : null; if (!sys) return;
+    if (FL.sboot.learnable(pi, hostInfo, sys.host.usb)) sys.learned = { vid: pi.usbVendorId, pid: pi.usbProductId };
+    else { sys.learned = null; log('Its passthrough port has the host’s own USB id, so Flasher won’t remember it: it’s picked each time.'); }
+    var chip = FL.sectors && FL.sectors.chip(info.device);
+    sys.remote.seen = { board: info.board || '', chip: chip ? chip.name : I.hex(info.device, 3), version: (info.version >> 8) + '.' + (info.version & 0xFF), at: Date.now() };
+    storeSystem(sys);
+  }
+  function systemBoard(sys) {
+    var host = sys.host || {}, ln = sys.link || LINK;
+    return {
+      id: 'system-' + sys.id, kind: 'bridge', system: true, name: sys.remote.name || 'The remote board', hostName: host.name || '',
+      runs: (host.usb || []).map(function (u) { return { vid: u.vid, pid: u.pid, name: host.name || '' }; }),
+      touchBaud: ln.touchBaud, linkBaud: ln.linkBaud, fastBaud: ln.fastBaud, exitBaud: ln.exitBaud,
+      bridge: sys.learned ? { vid: sys.learned.vid, pid: sys.learned.pid, name: '' } : null,
+      expect: {}, units: null, manualDfu: [], flash: null, ram: null, dfu: null
+    };
+  }
+  function systemFw() {
+    var f = S.sys.file, fw = { id: 'system', local: true, kind: 'units', split: true, name: f ? f.name : 'No file yet', size: f ? f.size : 0, sha256: f ? f.sha256 : '', segments: f ? f.segments : null, units: S.sys.units || [], parts: [] };
+    if (!f) fw.error = S.sys.loading ? 'Reading the file kept in this browser…' : 'Open the remote’s .hex or .elf first.';
+    return fw;
+  }
+  function hexId(u) { return hex4(u.vid) + ':' + hex4(u.pid); }
+
+  /* The system's diagram: this computer, the host, the link, and the remote, the three blocks clickable to set
+     them up, each showing its state during an update; the block map under it (FL.route.blocks). */
+  function sysDiagram(c, run) {
+    var m = bridgeModel(c, run), sys = S.sys.sys, sel = S.sys.block, f = S.sys.file, IC = FL.route.icons, ln = sys.link;
+    var pcNode = m.nodes[0], hostNode = m.nodes[1], remNode = m.nodes[2];
+    function stat(n) { return '<span class="fl-sys-status' + (n.live ? ' live' : '') + (n.good ? ' good' : '') + '">' + esc(n.status) + '</span>'; }
+    function block(key, node, icon, kicker, name, sub) {
+      return '<button type="button" class="fl-sys-block' + (sel === key ? ' sel' : '') + (node.on ? ' on' : '') + '" data-act="sys-block" data-block="' + key + '" aria-expanded="' + (sel === key) + '">' +
+        '<span class="fl-sys-kick">' + IC[icon] + esc(kicker) + '</span><span class="fl-sys-name">' + esc(name) + '</span><span class="fl-sys-sub">' + esc(sub) + '</span>' + stat(node) + '</button>';
+    }
+    var hostSub = (sys.host.usb || []).length ? 'USB ' + sys.host.usb.map(hexId).join(', ') : 'Any port you pick',
+      remSub = f ? f.name + ' · ' + I.fmtBytes(f.size) : S.sys.loading ? 'Reading its file…' : 'No .hex or .elf yet';
+    if (sys.remote.seen && sys.remote.seen.chip) remSub += ' · ' + sys.remote.seen.chip;
+    var h = '<div class="fl-sys">' + (m.note ? '<div class="fl-route-note">' + esc(m.note) + '</div>' : '') + '<div class="fl-sys-chain">' +
+      '<div class="fl-sys-pc' + (pcNode.on ? ' on' : '') + '"><span class="fl-sys-kick">' + IC.pc + 'This computer</span>' + stat(pcNode) + '</div>' +
+      '<span class="fl-sys-wire' + (m.links[0] ? ' on' : '') + '"><span class="fl-sys-wire-label">USB</span></span>' +
+      block('host', hostNode, 'host', 'Host · the bridge', sys.host.name || 'The host board', hostSub) +
+      '<span class="fl-sys-wire' + (m.links[1] ? ' on' : '') + '"><button type="button" class="fl-sys-link' + (sel === 'link' ? ' sel' : '') + '" data-act="sys-block" data-block="link" aria-expanded="' + (sel === 'link') + '">' +
+        'Link · ' + (ln.linkBaud / 1e6) + (ln.fastBaud ? '–' + (ln.fastBaud / 1e6) : '') + ' Mbaud</button></span>' +
+      block('remote', remNode, 'target', 'Remote', sys.remote.name || 'The remote board', remSub) +
+      '</div>' + FL.route.blocks(m) + '</div>';
+    return h;
+  }
+  function sysEditor() {
+    var sys = S.sys.sys, sel = S.sys.block, busy = S.run && S.run.busy, dis = busy ? ' disabled' : '';
+    if (sel === 'host') return '<div class="card fl-pad fl-sys-edit"><h3 class="fl-sys-edit-title">Host · the bridge</h3>' +
+      '<p class="note">The host keeps running its own firmware, which has the passthrough. Flasher knocks at ' + sys.link.touchBaud + ' baud on the port you pick, and it reopens its USB as a pipe onto the remote’s bootloader.</p>' +
+      '<div class="fl-sys-fields"><div class="field"><label for="sys-host-name">Name</label><input class="input" id="sys-host-name" data-change="sys-host-name" value="' + esc(sys.host.name) + '" placeholder="The host board"' + dis + '></div>' +
+      '<div class="field"><label for="sys-host-usb">USB ids <span class="fl-muted">(optional)</span></label><input class="input fl-mono" id="sys-host-usb" data-change="sys-host-usb" value="' + esc((sys.host.usb || []).map(hexId).join(', ')) + '" placeholder="0483:5740"' + dis + '>' +
+      '<div class="hint-text">Only narrow Chrome’s list to the host’s ports. Leave empty to pick from every port.</div></div></div></div>';
+    if (sel === 'link') return '<div class="card fl-pad fl-sys-edit"><h3 class="fl-sys-edit-title">Link</h3>' +
+      '<p class="note">The serial bootloader protocol’s rates. Change them only if the host’s firmware uses others.</p><div class="fl-sys-fields">' +
+      [['touchBaud', 'Knock (opens the passthrough)'], ['linkBaud', 'Link'], ['fastBaud', 'Fast (after SET_BAUD)'], ['exitBaud', 'Exit (back to its own firmware)']].map(function (r) {
+        return '<div class="field"><label for="sys-' + r[0] + '">' + r[1] + '</label><input class="input fl-mono" type="number" min="300" max="12000000" id="sys-' + r[0] + '" data-change="sys-' + r[0] + '" value="' + sys.link[r[0]] + '"' + dis + '></div>';
+      }).join('') + '</div><div class="fl-row"><button class="btn btn-plain" data-act="sys-link-reset"' + dis + '>Use the protocol’s rates</button>' +
+      (sys.learned ? '<button class="btn btn-plain" data-act="sys-forget-port"' + dis + '>Forget the passthrough port (USB ' + esc(hexId(sys.learned)) + ')</button>' : '') + '</div></div>';
+    if (sel === 'remote') {
+      var f = S.sys.file, seen = sys.remote.seen;
+      return '<div class="card fl-pad fl-sys-edit"><h3 class="fl-sys-edit-title">Remote</h3>' +
+        '<p class="note">A <b>.hex</b> or <b>.elf</b>: the image can span internal and external flash, so it needs its addresses. When the board answers, its bootloader says what its flash is, and Flasher splits the file into its blocks then.</p>' +
+        '<div class="fl-sys-fields"><div class="field"><label for="sys-remote-name">Name</label><input class="input" id="sys-remote-name" data-change="sys-remote-name" value="' + esc(sys.remote.name) + '" placeholder="The remote board"' + dis + '></div>' +
+        '<div class="field"><label>Firmware</label><div class="fl-row fl-sys-file">' + (f ? '<span class="chip fl-mono" title="SHA-256 ' + esc(f.sha256) + '">' + esc(f.name) + ' · ' + esc(I.fmtBytes(f.size)) + '</span>' : '') +
+        '<button class="btn" data-act="sys-file"' + dis + '>' + (f ? 'Another file…' : 'Open a .hex or .elf…') + '</button>' +
+        (DEMO ? '<button class="btn btn-plain" data-act="sys-demo-file"' + dis + '>Use the demo display’s build</button>' : '') + '</div>' +
+        '<div class="hint-text">Or drop it anywhere on the page.</div></div></div>' +
+        (seen ? '<p class="note">Last answered: ' + esc([seen.board ? '“' + seen.board + '”' : '', seen.chip, 'bootloader ' + seen.version].filter(Boolean).join(', ')) + ', ' + esc(relDay(seen.at)) + '.</p>' : '') + '</div>';
+    }
+    return '';
+  }
+  function systemHtml(c) {
+    var sys = S.sys.sys, run = S.run && S.run.key === runKey() ? S.run : null, busy = run && run.busy;
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Passthrough system · kept in this browser</div>' +
+      '<input class="page-title fl-sys-title" data-change="sys-name" value="' + esc(sys.name) + '" aria-label="System name"' + (busy ? ' disabled' : '') + '>' +
+      '<div class="page-sub">' + esc((sys.host.name || 'The host board') + ' passes its USB through to ' + (sys.remote.name || 'the remote board') + '. Click a block to set it up.') + '</div></div>' +
+      '<div class="fl-row fl-head-acts"><button class="btn btn-plain" data-act="sys-delete"' + (busy ? ' disabled' : '') + '>Remove</button></div></div>';
+    h += browserNote();
+    h += '<div class="card fl-pad fl-sys-card"><div id="fl-route-box">' + sysDiagram(c, run) + '</div></div>';
+    h += sysEditor();
+    h += '<div class="card fl-panel' + (detailsHidden() ? ' terse' : '') + '"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(BRIDGE_TAB) + '</button>' + detailsBtn() + '</div>' +
+      '<div class="fl-tab-body">' + bridgeHtml(c, run) + '</div></div>';
+    return h + '</div>';
   }
 
   // ── Console: a terminal on the board's serial port (assets/term.js draws it) ──
@@ -1489,6 +1752,14 @@
       case 'home': ev.preventDefault(); select('home'); break;
       case 'open-fw': select('fw', el.dataset.fw); break;
       case 'open-local': select('local'); break;
+      case 'sys-new': openSystem(null); break;
+      case 'sys-open': openSystem(el.dataset.sys); break;
+      case 'sys-block': if (S.sys) { S.sys.block = S.sys.block === el.dataset.block ? '' : el.dataset.block; render(); } break;
+      case 'sys-file': if (S.run && S.run.busy) toast('Wait for the update to finish.'); else $('#sys-file-input').click(); break;
+      case 'sys-demo-file': demoSystemFile(); break;
+      case 'sys-link-reset': if (S.sys) { S.sys.sys.link = Object.assign({}, LINK); systemChanged(); } break;
+      case 'sys-forget-port': if (S.sys) { S.sys.sys.learned = null; systemChanged(); toast('Flasher will ask for the passthrough port again'); } break;
+      case 'sys-delete': deleteSystem(); break;
       case 'open-file': if (S.run && S.run.busy) toast('Wait for the flash to finish.'); else $('#file-input').click(); break;
       case 'flash': startFlash(); break;
       case 'bridge-update': startBridge(false); break;
@@ -1529,9 +1800,9 @@
       case 'test-conn': testConnection(); break;
       case 'settings-cancel': closeSheet(); break;
       case 'sign-out':
-        if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too.')) break;
+        if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too. Flasher also forgets the passthrough systems and their files kept here.')) break;
         (window.SignoffAuth ? window.SignoffAuth.signOut() : Promise.resolve()).catch(function () { /* cleared below */ }).then(function () {
-          C.auth.clear(); forgetKept(); closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
+          C.auth.clear(); forgetKept(); forgetSystems(); closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
         });
         break;
       case 'gh-signin': ghSignIn(el); break;
@@ -1574,6 +1845,7 @@
     if (k === 'local-board') { S.local.boardId = ev.target.value; S.run = null; prepareBytes(); render(); }
     if (k === 'con-baud') { S.conBaud = +ev.target.value; render(); }
     if (k === 'con-filter') { S.conFilter = ev.target.value; render(); }
+    if (k && k.indexOf('sys-') === 0) systemField(k.slice(4), ev.target.value);
   });
 
   document.addEventListener('submit', function (ev) {
@@ -1655,6 +1927,8 @@
     });
   }
   $('#file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; openLocal(f); });
+  // A passthrough system's remote has its own picker, for a .hex or .elf only.
+  $('#sys-file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; if (S.view === 'system') setSystemFile(f); });
   // Drag and drop: a file dropped on the page opens as Open a file does; on the Debug probe tab, in the probe.
   function draggingFiles(ev) { return ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types || [], 'Files') >= 0; }
   var dragDepth = 0;
@@ -1670,6 +1944,7 @@
       var dt = new DataTransfer(); dt.items.add(f); $('#pb-file').files = dt.files; $('#pb-file').dispatchEvent(new Event('change'));
       return;
     }
+    if (S.view === 'system' && S.tab === 'serial') return setSystemFile(f);   // a system's remote takes it
     openLocal(f);
   });
 

@@ -605,6 +605,115 @@
     await link.close();
   });
 
+  // ── Passthrough systems: the layout from the board's own INFO (docs/releases-and-passthrough.md) ──
+  var F7 = { device: 0x451, singleBank: true, appBase: 0x08010000, appEnd: 0x08200000, qspiBase: 0x70000000, qspiSize: 0x400000, qspiBlock: 0x10000 };
+
+  test('sectors: the F7 table adds up to each family’s flash, and dual-bank is left out', function () {
+    var S7 = FL.sectors, total = function (l) { return l.reduce(function (n, s) { return n + s[1]; }, 0); };
+    eq(total(S7.sectors(0x451, true)), 2048 * 1024, 'F76x single-bank'); eq(S7.sectors(0x451, true)[4][0], 0x08020000, 'its 128 KB sector');
+    eq(total(S7.sectors(0x449, true)), 1024 * 1024, 'F74x'); eq(total(S7.sectors(0x452, true)), 512 * 1024, 'F72x');
+    eq(S7.sectors(0x451, false), null, 'dual-bank: its bank 2 depends on the flash size'); eq(S7.sectors(0x4A5, true), null, 'unknown chip');
+  });
+
+  test('layoutFromInfo: internal sectors from appBase, external flash in its blocks, the bootloader skipped', function () {
+    var lay = I.layoutFromInfo(F7), u = I.layoutUnits(lay);
+    eq(lay.skip.join(), [0x08000000, 0x08010000].join(), 'below appBase is the bootloader’s');
+    eq(lay.regions[0].app, true); eq(lay.regions[1].app, false, 'COMMIT covers internal flash only');
+    eq(u[0].addr, 0x08010000); eq(u[0].size, 0x8000); eq(u[2].size, 0x20000, 'then the 128 KB sector'); eq(u[3].size, 0x40000);
+    eq(u.length, 2 + 1 + 7 + 64, 'internal sectors and 4 MB of 64 KB blocks'); eq(lay.qspiBlockGuessed, false);
+    var none = I.layoutFromInfo(Object.assign({}, F7, { qspiSize: 0 }));
+    eq(none.regions.length, 1, 'no external flash');
+    var old = I.layoutFromInfo(Object.assign({}, F7, { qspiBlock: 0 }));
+    eq(old.regions[1].unit, 0x10000, 'an older bootloader: 64 KB assumed'); eq(old.qspiBlockGuessed, true, 'and said so');
+    eq(I.layoutFromInfo(Object.assign({}, F7, { qspiBlock: 0x1000 })).regions[1].unit, 0x1000, 'a 4 KB block when reported');
+    function why(info) { try { I.layoutFromInfo(Object.assign({}, F7, info)); return ''; } catch (e) { return e.message; } }
+    ok(/start of a sector/.test(why({ appBase: 0x08012000 })), 'appBase off a boundary');
+    ok(/end of a sector/.test(why({ appEnd: 0x08030000 })), 'appEnd off a boundary');
+    ok(/doesn’t know/.test(why({ device: 0x4A5 })), 'an unknown chip');
+    ok(/dual-bank/.test(why({ singleBank: false })), 'dual-bank');
+  });
+
+  test('layoutFromInfo: an H5’s uniform 8 KB sectors in either bank mode, with no external flash', function () {
+    var info = { device: 0x484, singleBank: false, appBase: 0x08020000, appEnd: 0x08200000, qspiBase: 0, qspiSize: 0, qspiBlock: 0 };
+    var lay = I.layoutFromInfo(info), u = I.layoutUnits(lay);
+    eq(lay.regions.length, 1, 'no external flash'); eq(u.length, (0x200000 - 0x20000) / 0x2000, 'every 8 KB sector after the bootloader');
+    eq(I.layoutFromInfo(Object.assign({}, info, { singleBank: true })).regions[0].starts.length, u.length, 'the same either way');
+  });
+
+  test('exit touch: a system’s port only once it answered; a manifest board’s also by its passthrough id', function () {
+    var pt = { usbVendorId: 0x0483, usbProductId: 0x5742 }, host = { usbVendorId: 0x0483, usbProductId: 0x5740 }, id = { vid: 0x0483, pid: 0x5742 };
+    eq(B.exitAllowed({ answered: true, system: true, bridge: null, portInfo: pt }), true, 'answered');
+    eq(B.exitAllowed({ answered: false, system: true, bridge: null, portInfo: pt }), false, 'a system’s port that never answered');
+    eq(B.exitAllowed({ answered: false, system: true, bridge: id, portInfo: pt }), false, 'even with its remembered id: it could be the host’s own');
+    eq(B.exitAllowed({ answered: false, system: false, bridge: id, portInfo: pt }), true, 'a manifest board’s passthrough by its id');
+    eq(B.exitAllowed({ answered: false, system: false, bridge: id, portInfo: host }), false, 'a manifest board, another port');
+    eq(B.learnable(pt, host, []), true, 'a new port remembered');
+    eq(B.learnable(host, host, []), false, 'not the host port that was knocked');
+    eq(B.learnable(pt, null, [{ vid: 0x0483, pid: 0x5742 }]), false, 'not one of the host’s listed ids');
+    eq(B.learnable(null, host, []), false, 'no id at all');
+  });
+
+  test('INFO: the added fields are read when present; an older bootloader’s 40 bytes still work', async function () {
+    var sim = FB.display({ units: [{ addr: 0x08010000, size: 0x8000 }], appBase: 0x08010000, appEnd: 0x08200000, qspiBase: 0x70000000, device: 0x451, qspiBlock: 0x10000, board: 'tstat-display', bootMs: 5 });
+    var link = new B.Link(FB.port(sim)); await link.open(1000000);
+    var info = await B.waitInfo(new B.Bootloader(link), 2000);
+    eq(info.qspiBlock, 0x10000); eq(info.board, 'tstat-display'); eq(info.appEnd, 0x08200000); eq(info.device, 0x451);
+    await link.close();
+    sim.shortInfo = true; link = new B.Link(FB.port(sim)); await link.open(1000000);
+    info = await B.waitInfo(new B.Bootloader(link), 2000);
+    eq(info.qspiBlock, 0, 'older: no block size'); eq(info.board, '', 'older: no board id'); eq(info.appBase, 0x08010000);
+    await link.close();
+  });
+
+  test('update: a file split after INFO, with no layout given; only the differing blocks written', async function () {
+    var lay = I.layoutFromInfo(F7);
+    function img(older) {
+      var r = (function (s) { return function () { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s & 0xFF; }; })(17);
+      var segs = [{ addr: 0x08010000, data: new Uint8Array(0x9000) }, { addr: 0x70000000, data: new Uint8Array(0x24000) }];
+      segs.forEach(function (sg) { for (var i = 0; i < sg.data.length; i++) sg.data[i] = r(); });
+      if (older) { segs[0].data[0x8100] ^= 0xFF; segs[1].data[0x21000] ^= 0xFF; }
+      return segs;
+    }
+    var sim = FB.display(Object.assign({ units: I.layoutUnits(lay), bootMs: 5, shortInfo: true }, F7));
+    I.unitsImage(img(true), lay, B.crc32).units.forEach(function (u) { sim.load(u.addr, u.part.bytes.subarray(u.addr - u.part.addr, u.addr - u.part.addr + u.size)); });
+    var link = new B.Link(FB.port(sim)), laid = null, sawInfo = null;
+    await link.open(1000000);
+    var res = await B.update(link, { parts: [] }, {
+      onInfo: function (i) { sawInfo = i; },
+      split: function (info) { return I.unitsImage(img(), I.layoutFromInfo(info), B.crc32); },
+      progress: function (p) { if (p.phase === 'layout') laid = p.units; },
+      fetchPart: function (p) { return Promise.resolve(p.bytes); }
+    });
+    ok(sawInfo && sawInfo.device === 0x451, 'onInfo saw the board');
+    eq(laid.length, 2 + 3, 'the block map got its blocks: two 32 KB sectors, three 64 KB blocks');
+    eq(res.changed.map(function (u) { return u.addr; }).join(), [0x08018000, 0x70020000].join(), 'only the two that differ');
+    eq(sim.record, B.RECORD.COMPLETE, 'committed over the internal blocks');
+    var after = I.unitsImage(img(), lay, B.crc32);
+    after.units.forEach(function (u) { eq(B.crc32(sim.read(u.addr, u.size)), u.crc, 'block ' + B.hex(u.addr)); });
+    await link.close();
+  });
+
+  test('update: a file that doesn’t fit the board’s flash stops before anything is erased', async function () {
+    var sim = FB.display(Object.assign({ units: I.layoutUnits(I.layoutFromInfo(F7)), bootMs: 5 }, F7)), link = new B.Link(FB.port(sim));
+    await link.open(1000000);
+    await rejects(B.update(link, { parts: [] }, { split: function (info) { return I.unitsImage([{ addr: 0x08004000, data: fill(16, 1) }, { addr: 0x08300000, data: fill(16, 1) }], I.layoutFromInfo(info), B.crc32); } }), /layout/, 'outside the flash');
+    eq(sim.counts[B.CMD.ERASE] || 0, 0, 'nothing erased'); eq(sim.counts[B.CMD.BEGIN] || 0, 0, 'nothing begun');
+    await link.close();
+  });
+
+  test('the demo display’s .hex, split from its INFO, gives the published firmware’s blocks exactly', async function () {
+    var c = await FL.catalog.loadDemo(), fw = c.firmware.filter(function (f) { return f.board === 'tstat-display'; })[0];
+    var hex = FL.files.parse('display.hex', new TextEncoder().encode(c.demoDisplayHex()));
+    var sim = c.demoSystemSim(fw.id), link = new B.Link(FB.port(sim));
+    await link.open(1000000);
+    var info = await B.waitInfo(new B.Bootloader(link), 3000);
+    await link.close();
+    eq(info.board, 'tstat-display'); eq(info.device, 0x451, 'a real STM32F767');
+    var img = I.unitsImage(hex.segments, I.layoutFromInfo(info), B.crc32);
+    eq(img.units.map(function (u) { return u.addr + ':' + u.size + ':' + u.crc; }).join(), fw.units.map(function (u) { return u.addr + ':' + u.size + ':' + u.crc; }).join(), 'the same blocks and CRCs');
+    eq(img.commit.crc, fw.commit.crc); eq(img.commit.length, fw.commit.length);
+  });
+
   test('route: the block map fills by erase, write, and verify', function () {
     var R = FL.route;
     eq(R.passes(4, 0, 0, 0).join(), 'unk,unk,unk,unk');

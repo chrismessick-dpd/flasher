@@ -1,7 +1,7 @@
 /* A simulated board behind a USB bridge, for the tests and ?demo: a Web Serial port whose far end
    is a bootloader speaking FL.sboot's protocol, with its own flash.
 
-     var sim = FL.fakebridge.display({ units: [{ addr, size }], appBase, qspiBase, device })
+     var sim = FL.fakebridge.display({ units: [{ addr, size }], appBase, appEnd, qspiBase, qspiSize, qspiBlock, board, device })
      var port = FL.fakebridge.port(sim, { vid, pid })      // the bridge's serial port
 
    Opening the port at the exit rate (1200) leaves the bridge: sim.exits counts it and
@@ -18,7 +18,10 @@
       mem: {}, baud: opts.baud || 1000000, record: opts.record === undefined ? B.RECORD.COMPLETE : opts.record,
       begun: false, running: false, booted: false, bootMs: opts.bootMs === undefined ? 30 : opts.bootMs,
       latency: opts.latency || 0, eraseMs: opts.eraseMs || 0, device: opts.device || 0x4A5, appBase: opts.appBase >>> 0,
-      qspiBase: opts.qspiBase >>> 0, qspiSize: opts.qspiSize || 0x1000000, singleBank: opts.singleBank !== false,
+      qspiBase: opts.qspiBase >>> 0, qspiSize: opts.qspiSize === undefined ? 0x1000000 : opts.qspiSize, singleBank: opts.singleBank !== false,
+      appEnd: opts.appEnd === undefined ? (opts.appBase >>> 0) + 0xF0000 : opts.appEnd >>> 0,
+      // The fields added within protocol 1: shortInfo answers as an older bootloader does (40 bytes).
+      qspiBlock: opts.qspiBlock || 0, board: opts.board || '', shortInfo: !!opts.shortInfo,
       exits: 0, log: [], counts: {}, dropEvery: 0, answered: 0
     };
     sim.unitAt = function (a) { return sim.units.filter(function (u) { return a >= u.addr && a < u.addr + u.size; })[0] || null; };
@@ -45,10 +48,11 @@
       var ok = [0], u, addr;
       switch (cmd) {
         case B.CMD.INFO: {
-          var b = new Uint8Array(41);
+          var b = new Uint8Array(sim.shortInfo ? 41 : 61);
           b[1] = B.PROTOCOL; b[2] = 1; b[3] = 0x00; b[4] = 0x01; b[5] = sim.device & 0xFF; b[6] = sim.device >> 8; b[7] = sim.singleBank ? 1 : 0; b[8] = sim.record;
           b[9] = B.MAX_DATA & 0xFF; b[10] = B.MAX_DATA >> 8;
-          [sim.appBase, sim.appBase + 0xF0000, sim.qspiBase, sim.qspiSize, 0x12345678, 0x9ABCDEF0, 0x0BADF00D].forEach(function (w, i) { b.set(B.le32(w), 13 + i * 4); });
+          [sim.appBase, sim.appEnd, sim.qspiBase, sim.qspiSize, 0x12345678, 0x9ABCDEF0, 0x0BADF00D].forEach(function (w, i) { b.set(B.le32(w), 13 + i * 4); });
+          if (!sim.shortInfo) { b.set(B.le32(sim.qspiBlock), 41); for (var c = 0; c < 16 && c < sim.board.length; c++) b[45 + c] = sim.board.charCodeAt(c); }
           return b;
         }
         case B.CMD.CRC: return [0].concat(B.le32(B.crc32(sim.read(B.rd32(p, 0), B.rd32(p, 4)))));
