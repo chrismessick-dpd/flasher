@@ -147,7 +147,7 @@
     // Laid out as the Serial bootloader tab is (Chris, 2026-11-17): the page's heading, the probe's
     // connection as a card, then one panel whose tabs are the probe's pages.
     root.innerHTML = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">' + (DEMO ? 'Debug probe · simulated ST-LINK' : 'Debug probe') + '</div>' +
-      '<h1 class="page-title">' + esc(S.chip ? S.chip.name.split('/')[0] : 'Connect a probe') + '</h1><div class="page-sub">Read and write an STM32 through an ST-LINK or J-Link: the chip, its memory and registers, programming, and option bytes.</div></div></div>' +
+      '<h1 class="page-title">' + esc(S.chip ? S.chip.name.split('/')[0] : 'Connect a probe') + '</h1><div class="page-sub">Wire an ST-LINK or J-Link to the board, and read, program, and debug the chip from Chrome or Edge. Everything runs in the browser, with no IDE or programming software to install.</div></div></div>' +
       stripHtml() + '<div class="card fl-panel pb-panel">' + subtabsHtml() + '<div class="fl-tab-body">' +
       ({ device: viewDevice, memory: viewMemory, program: viewProgram, registers: viewRegisters, options: viewOptions, log: viewLog }[S.view])() + '</div></div></div>';
     if (main && !root.hidden) main.scrollTop = y;
