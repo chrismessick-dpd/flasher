@@ -4,7 +4,7 @@
    it shows the image, block by block. Designed in lab/passthrough.html (concept C, Chris 2026-11-17).
 
    FL.route.html({ nodes: [{ icon, name, status, on, live }], links: [bool], note, cells: [state], legend })
-     icon: 'pc' | 'board' | 'host' | 'target'.  cells: 'unk' (not reached yet), 'same' (checked, left
+     icon: 'pc' | 'board' | 'host' | 'target' | 'probe' | 'chip'.  cells: 'unk' (not reached yet), 'same' (checked, left
      alone), 'diff' (differs or written, not yet checked), 'now', 'done' (written and read back),
      'erased'. legend: [[state, words]]. Severities never by hue alone: states differ by fill pattern. */
 (function (FL) {
@@ -15,6 +15,8 @@
     pc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="1.8"/><path d="M1.5 19.5h21"/></svg>',
     board: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M1 10.5h2M1 13.5h2"/></svg>',
     host: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M1 10.5h2M1 13.5h2M21 12h2"/></svg>',
+    probe: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="13" rx="2"/><path d="M10 15.5v3M14 15.5v3M9 21.5h6M10 6.5h4"/></svg>',
+    chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9.5 2.5V6M14.5 2.5V6M9.5 18v3.5M14.5 18v3.5M2.5 9.5H6M2.5 14.5H6M18 9.5h3.5M18 14.5h3.5"/></svg>',
     target: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="6" y="8" width="12" height="6" rx="1"/><path d="M1 12h2"/></svg>'
   };
 

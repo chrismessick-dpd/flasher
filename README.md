@@ -12,6 +12,10 @@ plug the board in by USB, and click **Flash board**. Part of the Dovetail Signof
   tab keeps its own pane, so the console stays connected while you flash or use the probe.
 - **Signed out**, a file from this computer, the probe, and the console all work; only the projects'
   firmware needs GitHub.
+- **The Serial bootloader tab opens on its tool with nothing picked** (the route, the steps, and a waiting
+  Flash button), as the Debug probe tab opens on its tool before a probe is connected; firmware is picked
+  in the sidebar. Both tabs share one layout: the page's heading, a card (About this firmware, or the probe's
+  connection), then one panel with tabs (Flash, or the probe's pages).
 - **The route** above every update shows where it goes, live: this computer → the board, or this computer →
   the host board → the bridge board, each stop saying what it's doing, with a block map of the image under it
   (`assets/route.js`; designed in `lab/passthrough.html`).
@@ -290,7 +294,8 @@ when that firmware was built for another chip; bridge-board firmware, which is i
   register.
 - **Erase & program:** the firmware picked in the sidebar, or open `.bin` (with a load address), `.hex`, `.elf`, or `.srec`; erase only the pages or
   sectors the image covers (the default, so a bootloader elsewhere stays) or the whole flash; write, verify by
-  reading back, and reset into it. Erase a range, or the whole flash, on its own.
+  reading back, and reset into it, with the route (this computer → the probe → the chip) and a block map as the
+  Serial bootloader tab draws them. Erase a range, or the whole flash, on its own.
 - **Registers:** every peripheral register from ST's SVD (bundled for the G0B1 and H563; **Open an SVD file**
   for any other chip), with fields decoded and editable, and Read and Write per register. Nothing is read
   until asked, and registers whose read changes them are never read by Read all.

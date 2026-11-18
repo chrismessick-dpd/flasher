@@ -285,10 +285,6 @@
   }
   setInterval(function () { if (!S.syncing) renderAccount(); }, 60000);
 
-  var ICON = {
-    chip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M13.2 7l-3.7 5.5h5L10.8 17"/><path d="M8 1.5V4M16 1.5V4M8 20v2.5M16 20v2.5M1.5 8H4M1.5 16H4M20 8h2.5M20 16h2.5"/></svg>',
-    key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14.5 8.5l2 2"/></svg>'
-  };
 
   function browserNote() {
     if (DEMO) return '';
@@ -299,52 +295,54 @@
       '. Flashing needs WebUSB and Web Serial, which Chrome and Edge have on Windows, macOS, and Linux (Firefox and Safari don’t).</div>';
   }
 
+  // Home: the banner and the flash tool with nothing picked yet (Chris, 2026-11-17), as the Debug probe
+  // tab shows its tool before a probe is connected. The firmware is picked in the sidebar.
   function homeHtml() {
-    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Dovetail tools</div>' +
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Serial bootloader</div>' +
       '<h1 class="page-title">Flash a board</h1><div class="page-sub">Pick the firmware, plug the board in by USB, and flash it from Chrome or Edge. No Arduino IDE needed.</div></div></div>';
     h += browserNote();
-    if (S.loading) return h + '<div class="card fl-pad"><p class="fl-muted">Loading firmware from ' + esc(DEMO ? 'the demo' : FL.config.owner + '/' + FL.config.repo) + '…</p></div></div>';
-    if (!DEMO && !C.auth.token()) {
-      return h + '<div class="card empty"><div class="empty-art">' + ICON.key + '</div><h2>Projects’ firmware is private</h2>' +
-        '<p>Sign in with the GitHub access you use for Signoff to see the projects shared with you; if you’re signed in to Signoff EE in this browser, you’re already set. ' +
-        'Flashing a file from this computer, the Debug probe, and the Console all work without signing in.</p>' +
-        '<div class="fl-row fl-center">' + (ghAuth() ? '<button class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button><button class="btn" data-act="account">Use a token…</button>'
-          : '<button class="btn btn-primary" data-act="account">Sign in…</button>') + '<button class="btn" data-act="open-file">Open a .bin file…</button></div>' +
-        '<p class="note">Just looking? <a href="?demo">Try the demo</a>, which flashes a simulated board.</p></div></div>';
-    }
-    if (S.error) {
-      if (S.invites && S.invites.length) {
-        return h + '<div class="hint fl-warn"><b>An invitation is waiting</b>' + esc(S.error) + '</div><div class="fl-row">' +
-          S.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
-      }
-      return h + '<div class="hint fl-bad"><b>Couldn’t read the firmware list</b>' + esc(S.error) + '</div>' +
-        '<div class="fl-row"><button class="btn btn-primary" data-act="reload">Try again</button><button class="btn" data-act="account">GitHub sign-in…</button><button class="btn" data-act="open-file">Open a .bin file…</button></div></div>';
-    }
-    if (!S.catalog) return h + '</div>';
     var c = S.catalog;
-    if (c.invites && c.invites.length) {
-      h += '<div class="hint fl-warn"><b>Invitation waiting</b>You’ve been given more firmware on GitHub. Accept to see it here.<div class="fl-row">' +
-        c.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
+    if (S.loading) h += '<div class="hint"><b>Loading</b>Reading the firmware list from ' + esc(DEMO ? 'the demo' : FL.config.owner + '/' + FL.config.repo) + '…</div>';
+    else if (!DEMO && !C.auth.token()) {
+      h += '<div class="hint fl-signin"><b>Projects’ firmware is private</b>Sign in with the GitHub access you use for Signoff to see the projects shared with you. A file from this computer, the Debug probe, and the Console work without it.' +
+        '<div class="fl-row">' + (ghAuth() ? '<button class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button><button class="btn" data-act="account">Use a token…</button>'
+          : '<button class="btn btn-primary" data-act="account">Sign in…</button>') + '<a class="fl-demo-link" href="?demo">Or try the demo</a></div></div>';
+    } else if (S.error) {
+      if (S.invites && S.invites.length) {
+        h += '<div class="hint fl-warn"><b>An invitation is waiting</b>' + esc(S.error) + '<div class="fl-row">' +
+          S.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
+      } else {
+        h += '<div class="hint fl-bad"><b>Couldn’t read the firmware list</b>' + esc(S.error) +
+          '<div class="fl-row"><button class="btn btn-primary" data-act="reload">Try again</button><button class="btn" data-act="account">GitHub sign-in…</button></div></div>';
+      }
+    } else if (c) {
+      if (c.invites && c.invites.length) {
+        h += '<div class="hint fl-warn"><b>Invitation waiting</b>You’ve been given more firmware on GitHub. Accept to see it here.<div class="fl-row">' +
+          c.invites.map(function (i) { return '<button class="btn btn-primary" data-act="accept-invite" data-id="' + esc(i.id) + '">Accept ' + esc(i.repo) + '</button>'; }).join('') + '</div></div>';
+      }
+      if (c.problems.length) h += '<details class="guide"><summary>' + c.problems.length + ' entr' + (c.problems.length === 1 ? 'y' : 'ies') + ' in manifest.json skipped</summary><ul>' + c.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></details>';
+      if (!c.firmware.length) h += '<div class="hint"><b>Nothing published yet</b>' + esc(c.source) + ' has no firmware in its manifest.</div>';
     }
-    if (c.problems.length) h += '<details class="guide"><summary>' + c.problems.length + ' entr' + (c.problems.length === 1 ? 'y' : 'ies') + ' in manifest.json skipped</summary><ul>' + c.problems.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') + '</ul></details>';
-    var by = {};
-    c.firmware.forEach(function (f) { (by[f.board] = by[f.board] || []).push(f); });
-    Object.keys(c.boards).forEach(function (bid) {
-      var b = c.boards[bid];
-      h += '<div class="fl-board"><div class="fl-board-head"><h2 class="section-title">' + esc(b.name) + '</h2>' + (b.mcu ? '<span class="chip">' + esc(b.mcu) + '</span>' : '') + '</div>';
-      if (b.notes) h += '<p class="fl-muted fl-board-note">' + esc(b.notes) + '</p>';
-      h += '<div class="grid grid-3">' + (by[bid] || []).map(function (f) {
-        return '<button class="card fl-fw" data-act="open-fw" data-fw="' + esc(f.id + '@' + f.board) + '">' +
-          '<span class="fl-fw-name">' + esc(f.name) + '</span><span class="fl-fw-sum">' + esc(f.summary || 'No description.') + '</span>' +
-          '<span class="chips"><span class="chip">' + esc(I.fmtBytes(f.size)) + '</span>' + (f.built ? '<span class="chip">' + esc(fmtDate(f.built)) + '</span>' : '') +
-          (f.source.dirty ? '<span class="chip fl-chip-warn" title="Built from a checkout with uncommitted changes">Uncommitted changes</span>' : '') + '</span></button>';
-      }).join('') + '</div></div>';
-    });
-    if (!c.firmware.length) h += '<div class="card empty"><h2>Nothing published yet</h2><p>' + esc(c.source) + ' has no firmware in its manifest.</p></div>';
-    h += '<p class="note fl-foot">From ' + esc(c.source) + (c.updated ? ', updated ' + esc(fmtDate(c.updated)) : '') + '. Every file is checked against its SHA-256 before it’s flashed.</p>';
+    h += emptyToolHtml();
+    if (c && c.firmware.length) h += '<p class="note fl-foot">' + c.firmware.length + ' firmware from ' + esc(c.source) + (c.updated ? ', updated ' + esc(fmtDate(c.updated)) : '') + '. Every file is checked against its SHA-256 before it’s flashed.</p>';
     return h + '</div>';
   }
-
+  // The flash panel before anything is picked: the route, the steps, and a Flash button waiting.
+  function emptyToolHtml() {
+    var route = FL.route.html({
+      nodes: [{ icon: 'pc', name: 'This computer', status: 'Ready', on: true }, { icon: 'board', name: 'The board', status: 'Nothing picked yet' }],
+      links: [false], note: 'Pick firmware to flash', cells: FL.route.passes(24, 0, 0, 0),
+      legend: [['unk', 'Not written yet'], ['erased', 'Erased'], ['diff', 'Written'], ['done', 'Read back and checked']]
+    });
+    return '<div class="card fl-panel"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">Flash</button></div><div class="fl-tab-body">' + route +
+      '<div class="fl-flash"><p class="fl-intro">Pick the firmware in the list on the left' + (S.catalog || DEMO ? '' : ' (once signed in)') + ', or flash a <b>.bin</b> file from this computer.</p>' +
+      '<ol class="fl-steps">' +
+      '<li class="fl-step"><span class="fl-num">1</span><div><div class="fl-step-title">Pick the firmware</div><div class="fl-step-sub">From a project in the list, or a file. A project’s firmware knows its board and how to restart it.</div>' +
+      '<div class="fl-row"><button class="btn" data-act="open-file">Open a .bin file…</button></div></div></li>' +
+      '<li class="fl-step"><span class="fl-num">2</span><div><div class="fl-step-title">Put the board in update mode</div><div class="fl-step-sub">Flasher restarts it over USB when its firmware listens for that; otherwise BOOT0 and reset, by hand.</div></div></li>' +
+      '<li class="fl-step"><span class="fl-num">3</span><div><div class="fl-step-title">Write, check, and run it</div><div class="fl-step-sub">Flasher erases the board, writes the firmware, reads it back to check every byte, and starts it.</div></div></li>' +
+      '</ol><div class="fl-row"><button class="btn btn-primary" disabled title="Pick firmware first">Flash board</button><span class="fl-muted">Pick firmware first.</span></div></div></div></div>';
+  }
   function fwHtml(c) {
     var fw = c.fw, b = c.board, run = S.run && S.run.key === runKey() ? S.run : null;
     var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">' + esc(b.name) + '</div>' +

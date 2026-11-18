@@ -122,19 +122,19 @@
     var on = !!S.target, b = S.busy;
     var speeds = (S.speeds && S.speeds.length ? S.speeds : [24000, 8000, 4000, 1800, 1000, 480, 100]);
     if (speeds.indexOf(S.khz) < 0) speeds = speeds.concat([S.khz]).sort(function (a, x) { return x - a; });
-    return '<div class="pb-strip">' +
+    return '<div class="card fl-pad pb-conn"><div class="pb-conn-row">' +
       '<div class="seg" title="Which probe"><button type="button" data-act="kind" data-kind="stlink" class="' + (S.kind === 'stlink' ? 'on' : '') + '"' + (S.probe ? ' disabled' : '') + '>ST-LINK</button>' +
       '<button type="button" data-act="kind" data-kind="jlink" title="Experimental: connects and reads; long transfers have rebooted a J-Link V13 into its bootloader" class="' + (S.kind === 'jlink' ? 'on' : '') + '"' + (S.probe || DEMO ? ' disabled' : '') + '>J-Link (beta)</button></div>' +
       '<label class="pb-check" title="Hold NRST low while connecting, so the application never runs (needs NRST wired to the probe)"><input type="checkbox" data-change="under-reset"' + (S.underReset ? ' checked' : '') + (on ? ' disabled' : '') + '> Under reset</label>' +
       '<select class="input" data-change="khz" title="SWD clock"' + (on ? ' disabled' : '') + '>' + speeds.map(function (k) { return '<option value="' + k + '"' + (k === S.khz ? ' selected' : '') + '>' + (k >= 1000 ? k / 1000 + ' MHz' : k + ' kHz') + '</option>'; }).join('') + '</select>' +
       '<span class="grow"></span>' +
       (on ? '<button class="btn" data-act="disconnect"' + (b ? ' disabled' : '') + '>Disconnect</button>' : '<button class="btn btn-primary" data-act="connect"' + (b ? ' disabled' : '') + '>Connect</button>') +
-      '</div>';
+      '</div><div class="pb-conn-status"><span class="sync-dot' + (b ? ' pb-run' : on ? ' pb-ok' : '') + '"></span>' + esc(status().text) + '</div></div>';
   }
   function subtabsHtml() {
-    return '<nav class="pb-subtabs" aria-label="Probe pages">' + PAGES.map(function (p) {
-      return '<button type="button" class="' + (S.view === p[0] ? 'on' : '') + '" data-act="view" data-view="' + p[0] + '">' + p[1] + '</button>';
-    }).join('') + '</nav>';
+    return '<div class="fl-tabs" role="tablist" aria-label="Probe pages">' + PAGES.map(function (p) {
+      return '<button type="button" role="tab" aria-selected="' + (S.view === p[0]) + '" class="' + (S.view === p[0] ? 'on' : '') + '" data-act="view" data-view="' + p[0] + '">' + p[1] + '</button>';
+    }).join('') + '</div>';
   }
   // For the page's top bar: whether a target is connected, and what to say about it.
   function status() {
@@ -144,15 +144,19 @@
   function render() {
     if (!root) return;
     var main = document.getElementById('main'), y = main ? main.scrollTop : 0, focus = document.activeElement && document.activeElement.id;
-    root.innerHTML = stripHtml() + subtabsHtml() + '<div class="page">' + ({ device: viewDevice, memory: viewMemory, program: viewProgram, registers: viewRegisters, options: viewOptions, log: viewLog }[S.view])() + '</div>';
+    // Laid out as the Serial bootloader tab is (Chris, 2026-11-17): the page's heading, the probe's
+    // connection as a card, then one panel whose tabs are the probe's pages.
+    root.innerHTML = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">' + (DEMO ? 'Debug probe · simulated ST-LINK' : 'Debug probe') + '</div>' +
+      '<h1 class="page-title">' + esc(S.chip ? S.chip.name.split('/')[0] : 'Connect a probe') + '</h1><div class="page-sub">Read and write an STM32 through an ST-LINK or J-Link: the chip, its memory and registers, programming, and option bytes.</div></div></div>' +
+      stripHtml() + '<div class="card fl-panel pb-panel">' + subtabsHtml() + '<div class="fl-tab-body">' +
+      ({ device: viewDevice, memory: viewMemory, program: viewProgram, registers: viewRegisters, options: viewOptions, log: viewLog }[S.view])() + '</div></div></div>';
     if (main && !root.hidden) main.scrollTop = y;
     if (focus && $('#' + focus)) $('#' + focus).focus();
     var box = $('#pb-log-lines'); if (box) box.scrollTop = box.scrollHeight;
     host.changed();
   }
-  function head(eyebrow, title, sub) {
-    return '<div class="page-head"><div class="page-head-text"><div class="eyebrow">' + esc(eyebrow) + '</div><h1 class="page-title">' + esc(title) + '</h1>' + (sub ? '<div class="page-sub">' + sub + '</div>' : '') + '</div></div>';
-  }
+  // Each page's lead-in, under its tab (the page's heading is drawn once, in render).
+  function head(eyebrow, title, sub) { return sub ? '<p class="fl-intro pb-lead">' + sub + '</p>' : ''; }
   function dis() { return S.busy ? ' disabled' : ''; }
   function recentLog() {
     return '<div class="card pb-recent"><pre class="pb-log" id="pb-log-lines">' + S.log.slice(-40).map(line).join('') + '</pre></div>';
@@ -163,8 +167,7 @@
   }
 
   function viewDevice() {
-    var h = head(DEMO ? 'Demo · simulated ST-LINK' : 'SWD debug probe', S.chip ? S.chip.name : 'Connect a probe',
-      'Read and write an STM32 through an ST-LINK or J-Link from this page: the chip, its memory and registers, programming files, and option bytes.');
+    var h = '';
     if (!S.probe) return h + notConnected('No probe is open.') + recentLog();
     var p = S.probe.info, c = S.chip, core = S.core;
     h += '<div class="pb-grid"><div class="card fl-pad"><h2 class="pb-card-title">Probe</h2><dl class="pb-kv">' +
@@ -261,7 +264,9 @@
         '<div class="fl-row"><button class="btn btn-primary" data-act="program"' + (S.target && !S.busy ? '' : ' disabled') + '>Erase and program</button>' +
         '<button class="btn" data-act="verify-only"' + (S.target && !S.busy ? '' : ' disabled') + '>Compare with the chip</button></div>';
     }
-    if (g.run) h += progressBar(g.run) + (g.run.done ? '<div class="hint ' + (g.run.ok ? 'fl-good' : 'fl-bad') + ' pb-result"><b>' + esc(g.run.ok ? 'Done.' : 'Failed.') + '</b> ' + esc(g.run.msg || '') + '</div>' : '');
+    if (img || (g.run && g.run.kind)) h += '<div id="pb-route" style="margin-top:16px">' + progRoute() + '</div>';
+    else if (g.run) h += progressBar(g.run);
+    if (g.run) h += (g.run.done ? '<div class="hint ' + (g.run.ok ? 'fl-good' : 'fl-bad') + ' pb-result"><b>' + esc(g.run.ok ? 'Done.' : 'Failed.') + '</b> ' + esc(g.run.msg || '') + '</div>' : '');
     h += '</div>';
     h += '<div class="card fl-pad"><h2 class="pb-card-title">Erase only</h2><div class="pb-fields">' +
       '<div class="field"><label for="e-from">From</label><input class="input" id="e-from" placeholder="0x08000000"></div>' +
@@ -436,9 +441,37 @@
     S.prog.run = null;
   }
 
-  function setRun(pct, phase) {
-    S.prog.run = Object.assign(S.prog.run || {}, { pct: pct, phase: phase });
+  // part ('erase', 'write', or 'verify') and f (0 to 1) feed the block map; the route redraws in place.
+  function setRun(pct, phase, part, f) {
+    var run = S.prog.run = Object.assign(S.prog.run || {}, { pct: pct, phase: phase });
+    if (part) { run.frac = run.frac || { erase: 0, write: 0, verify: 0 }; run.frac[part] = f; }
+    var box = $('#pb-route'); if (box) { box.innerHTML = progRoute(); host.changed(); return; }
     var bar = $('.fl-bar i'), ph = $('.fl-phase'); if (bar) bar.style.width = Math.round(pct * 100) + '%'; if (ph) ph.textContent = phase;
+  }
+  // The route above Erase & program, as the Serial bootloader tab draws its own (assets/route.js):
+  // this computer → the probe → the chip, and the image as a block map.
+  function progRoute() {
+    var run = S.prog.run, c = S.chip, busy = run && !run.done, ok = run && run.done && run.ok, bad = run && run.done && !run.ok;
+    var size = segs().reduce(function (n, s) { return n + s.data.length; }, 0), n = Math.max(8, Math.min(48, Math.ceil(size / 4096) || 24));
+    var verb = run && run.kind === 'compare' ? 'Comparing' : (run && run.phase || 'Working').split(/[ ·,.]/)[0];
+    var pc = busy ? verb : ok ? (run.kind === 'compare' ? 'Compared' : 'Done') : bad ? 'Stopped' : 'Ready';
+    var pr = S.probe ? (S.target ? 'SWD at ' + (S.probe.khz >= 1000 ? S.probe.khz / 1000 + ' MHz' : S.probe.khz + ' kHz') : 'No target') : 'Not connected';
+    var core = S.core, chipSt = !c ? 'Not connected' : busy ? 'Halted, being ' + (run.kind === 'compare' ? 'read' : 'programmed') :
+      ok && run.kind !== 'compare' ? (S.prog.reset ? 'Running ' + (S.prog.img ? S.prog.img.name : 'it') : 'Programmed, halted') :
+      core ? (core.halted ? 'Halted' : core.lockup ? 'Locked up' : 'Running') : 'Connected';
+    var fr = (run && run.frac) || {}, cells;
+    if (ok && run.kind === 'program') cells = FL.route.passes(n, 1, 1, S.prog.verify ? 1 : 0);
+    else if (ok && run.kind === 'compare') cells = FL.route.passes(n, 0, 0, 1);
+    else if (ok && run.kind === 'erase') cells = FL.route.passes(n, 1, 0, 0);
+    else cells = FL.route.passes(n, fr.erase || 0, fr.write || 0, fr.verify || 0);
+    var note = busy ? run.phase : ok ? run.phase : F.fmtBytes(size) + ', drawn as ' + n + ' blocks';
+    return FL.route.html({
+      nodes: [{ icon: 'pc', name: 'This computer', status: pc, on: true, live: busy, good: ok },
+        { icon: 'probe', name: S.probe ? S.probe.info.name : (S.kind === 'jlink' ? 'J-Link' : 'ST-LINK'), status: pr, on: !!S.target, live: busy },
+        { icon: 'chip', name: c ? c.name.split('/')[0] : 'The chip', status: chipSt, on: !!c, live: busy, good: ok && run.kind !== 'compare' && S.prog.reset }],
+      links: [!!S.probe && busy, !!S.target && busy], note: note, cells: cells, cellsLabel: 'The image in ' + n + ' blocks',
+      legend: [['unk', 'Not written yet'], ['erased', 'Erased'], ['diff', 'Written'], ['done', 'Read back and checked']]
+    });
   }
 
   async function doProgram(verifyOnly) {
@@ -447,22 +480,30 @@
     if (!ss.length) throw new Error('Open a file first.');
     if (plan.outside) throw new Error(plan.outside);
     if (!verifyOnly && S.prog.erase === 'mass' && !(await confirmSheet('Erase the whole flash?', '<p>Everything in the ' + esc(c.name) + '\'s ' + F.fmtBytes(c.flashSize) + ' of flash is erased before the file is written, including any bootloader.</p>', null, 'Erase and program'))) return;
-    S.prog.run = { pct: 0, phase: 'Starting' }; render();
+    var kind = verifyOnly ? 'compare' : 'program', total = ss.reduce(function (n, x) { return n + x.data.length; }, 0), before = 0;
+    S.prog.run = { pct: 0, phase: 'Starting', kind: kind, frac: { erase: 0, write: 0, verify: 0 } }; render();
     var t = S.target, t0 = Date.now();
     if (!(await t.status()).halted) { await t.halt(); log('Halted the core.'); }
     if (!verifyOnly) {
-      if (S.prog.erase === 'mass') { log('Mass erase…'); await X.massErase(t, c, setRun); }
-      else { log('Erasing ' + plan.list.length + ' ' + (c.family.id === 'h5' ? 'sectors' : 'pages') + ', ' + hex(plan.lo) + ' to ' + hex(plan.hi - 1) + '…'); await X.eraseSectors(t, c, plan.list, function (p, m) { setRun(p * 0.15, m); }); }
+      if (S.prog.erase === 'mass') { log('Mass erase…'); await X.massErase(t, c, function (p, m) { setRun(p * 0.15, m, 'erase', p); }); }
+      else { log('Erasing ' + plan.list.length + ' ' + (c.family.id === 'h5' ? 'sectors' : 'pages') + ', ' + hex(plan.lo) + ' to ' + hex(plan.hi - 1) + '…'); await X.eraseSectors(t, c, plan.list, function (p, m) { setRun(p * 0.15, m, 'erase', p); }); }
+      setRun(0.15, 'Erased', 'erase', 1);
       for (var i = 0; i < ss.length; i++) {
-        var s = ss[i];
+        var s = ss[i], at = before;
         log('Writing ' + F.fmtBytes(s.data.length) + ' at ' + hex(s.addr) + (S.prog.slow ? ' (careful mode)' : '') + '…');
-        var r = await X.program(t, c, s.addr, s.data, function (p, m) { setRun(0.15 + p * (S.prog.verify ? 0.55 : 0.85), m); }, { slow: S.prog.slow, log: log });
+        var r = await X.program(t, c, s.addr, s.data, function (p, m) { setRun(0.15 + p * (S.prog.verify ? 0.55 : 0.85), m, 'write', (at + p * s.data.length) / total); }, { slow: S.prog.slow, log: log });
+        before += s.data.length;
         if (r.redone) log('Rewrote ' + r.redone + ' interrupted block' + (r.redone > 1 ? 's' : '') + ' carefully.');
         log('Wrote ' + F.fmtBytes(r.bytes) + ' in ' + (r.ms / 1000).toFixed(1) + ' s (' + F.fmtBytes(Math.round(r.bytes / Math.max(r.ms, 1) * 1000)) + '/s).');
       }
     }
     if (S.prog.verify || verifyOnly) {
-      for (var j = 0; j < ss.length; j++) await X.verify(t, ss[j].addr, ss[j].data, function (p, m) { setRun(verifyOnly ? p : 0.7 + p * 0.3, m); });
+      before = 0;
+      for (var j = 0; j < ss.length; j++) {
+        var vs = ss[j], vat = before;
+        await X.verify(t, vs.addr, vs.data, function (p, m) { setRun(verifyOnly ? p : 0.7 + p * 0.3, m, 'verify', (vat + p * vs.data.length) / total); });
+        before += vs.data.length;
+      }
       log(verifyOnly ? 'The chip matches the file.' : 'Verified.');
     }
     if (!verifyOnly) {
@@ -470,7 +511,7 @@
       if (S.prog.reset) { await t.resetRun(false); log('Reset; the new image is running.'); }
     }
     var secs = ((Date.now() - t0) / 1000).toFixed(1);
-    S.prog.run = { pct: 1, phase: verifyOnly ? 'Compared' : 'Done', done: true, ok: true, msg: verifyOnly ? 'The chip matches ' + S.prog.img.name + '.' : S.prog.img.name + ' written' + (S.prog.verify ? ' and verified' : '') + ' in ' + secs + ' s.' + (S.prog.reset ? ' The chip was reset and is running it.' : '') };
+    S.prog.run = { pct: 1, kind: kind, phase: verifyOnly ? 'The chip matches the image' : (S.prog.verify ? 'Written and read back' : 'Written') + ' in ' + secs + ' s', done: true, ok: true, msg: verifyOnly ? 'The chip matches ' + S.prog.img.name + '.' : S.prog.img.name + ' written' + (S.prog.verify ? ' and verified' : '') + ' in ' + secs + ' s.' + (S.prog.reset ? ' The chip was reset and is running it.' : '') };
     await refreshCore();
   }
 
@@ -553,9 +594,9 @@
         S.busy = 'Erase';
         if (!ok) return;
         if (!(await S.target.status()).halted) await S.target.halt();
-        S.prog.run = { pct: 0, phase: 'Erasing' };
-        await X.eraseSectors(S.target, S.chip, list, setRun);
-        S.prog.run = { pct: 1, phase: 'Erased', done: true, ok: true, msg: 'Erased ' + list.length + ' from ' + hex(list[0].addr) + '.' };
+        S.prog.run = { pct: 0, phase: 'Erasing', kind: 'erase' };
+        await X.eraseSectors(S.target, S.chip, list, function (p, m) { setRun(p, m, 'erase', p); });
+        S.prog.run = { pct: 1, phase: 'Erased', kind: 'erase', done: true, ok: true, msg: 'Erased ' + list.length + ' from ' + hex(list[0].addr) + '.' };
         log('Erased ' + list.length + ' units from ' + hex(list[0].addr) + '.');
       });
     },
@@ -565,9 +606,9 @@
       if (!ok) return;
       return op('Mass erase', async function () {
         if (!(await S.target.status()).halted) await S.target.halt();
-        S.prog.run = { pct: 0, phase: 'Erasing' };
-        await X.massErase(S.target, S.chip, setRun);
-        S.prog.run = { pct: 1, phase: 'Erased', done: true, ok: true, msg: 'The whole flash is erased.' };
+        S.prog.run = { pct: 0, phase: 'Erasing', kind: 'erase' };
+        await X.massErase(S.target, S.chip, function (p, m) { setRun(p, m, 'erase', p); });
+        S.prog.run = { pct: 1, phase: 'Erased', kind: 'erase', done: true, ok: true, msg: 'The whole flash is erased.' };
         log('Mass erase done.');
       });
     },

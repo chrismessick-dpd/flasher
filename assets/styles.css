@@ -163,6 +163,9 @@
   border-radius: 999px; background: var(--bg-sunk); white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis;
 }
 .fl-conn .sync-dot { flex: none; }
+.toolbar .toolbar-actions { min-width: 0; flex: 0 1 auto; }
+.fl-conn { min-width: 0; flex: 0 1 auto; }
+@media (max-width: 1100px) { .toolbar .fl-version { display: none; } }
 .fl-pane[hidden] { display: none !important; }
 @media (max-width: 760px) {
   .fl-toptabs { flex: 1; justify-content: space-around; }
@@ -180,9 +183,9 @@
 .fl-route { margin: 0 0 16px; }
 .fl-route-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
 /* Drawn at 150% (Chris, 2026-11-17). */
-.fl-chain { display: inline-flex; align-items: flex-start; gap: 9px; font-size: 19.5px; padding: 10px 18px 11px; border-radius: 18px; background: var(--bg-sunk); max-width: 100%; }
+.fl-chain { display: inline-flex; flex-wrap: wrap; row-gap: 8px; align-items: flex-start; gap: 9px; font-size: 19.5px; padding: 10px 18px 11px; border-radius: 18px; background: var(--bg-sunk); max-width: 100%; }
 .fl-chain svg { width: 22px; height: 22px; flex: none; }
-.fl-chain .hop { display: inline-flex; flex-direction: column; gap: 2px; color: var(--text-2); min-width: 0; }
+.fl-chain .hop { display: inline-flex; flex-direction: column; gap: 2px; color: var(--text-2); flex: none; max-width: 100%; }
 .fl-chain .hop-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .fl-chain .hop.on .hop-name { color: var(--text); font-weight: 600; }
 .fl-chain .hop-status { font-size: 13.5px; color: var(--text-3); padding-left: 30px; transition: color 0.3s; }
@@ -227,14 +230,20 @@ body.has-banner .fl-con-page { height: calc(100vh - 56px - 34px); }
 .fl-con-body .note { margin: 8px 0 0; }
 @media (max-width: 760px) { .fl-con-strip { padding: 10px 16px; } .fl-con-body { padding: 10px 16px 14px; } }
 
-/* ── Debug probe tab: the probe's settings as a strip, its pages as sub-tabs ── */
-.pb-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 28px; border-bottom: 1px solid var(--hair); }
-.pb-strip .grow { flex: 1; }
-.pb-strip select.input { width: auto; padding-right: 26px; }
-.pb-subtabs { display: flex; gap: 2px; padding: 0 28px; border-bottom: 1px solid var(--hair); overflow-x: auto; scrollbar-width: none; }
-.pb-subtabs::-webkit-scrollbar { display: none; }
-.pb-subtabs button { position: relative; border: none; background: none; cursor: pointer; color: var(--text-2); font: 600 13.5px var(--display); padding: 11px 12px; white-space: nowrap; }
-.pb-subtabs button:hover { color: var(--text); }
-.pb-subtabs button.on { color: var(--text); }
-.pb-subtabs button.on::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
-@media (max-width: 760px) { .pb-strip, .pb-subtabs { padding-left: 16px; padding-right: 16px; } }
+/* ── Debug probe tab, laid out as the Serial bootloader tab: the connection as a card, its pages as the
+   tabs of one panel. Cards inside the panel go flat, as sections of it. ── */
+.pb-conn { margin-bottom: 18px; }
+.pb-conn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.pb-conn-row .grow { flex: 1; }
+.pb-conn-row select.input { width: auto; padding-right: 26px; }
+.pb-conn-status { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--text-2); }
+.pb-panel .fl-tabs { overflow-x: auto; scrollbar-width: none; }
+.pb-panel .fl-tabs button { white-space: nowrap; flex: none; }
+.pb-panel .fl-tabs::-webkit-scrollbar { display: none; }
+.pb-panel .fl-tab-body > .card, .pb-panel .fl-tab-body .pb-grid > .card { box-shadow: inset 0 0 0 1px var(--hair); background: transparent; }
+.pb-panel .fl-tab-body > .card + .card, .pb-panel .fl-tab-body > .pb-grid + .card { margin-top: 14px; }
+.pb-lead { margin-bottom: 14px; }
+
+/* Home's sign-in note, and the demo link beside its buttons */
+.hint.fl-signin .fl-row { margin-top: 10px; }
+.fl-demo-link { color: var(--accent); font-size: 13px; }
