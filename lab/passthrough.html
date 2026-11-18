@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Design lab: small graphics that explain a bridge board's update (a board with no USB, flashed through
+     another board's passthrough). Three concepts, one player. Not loaded by the tool. The boards are the
+     made-up Smart Thermostat's: the Main PCBA passes its USB through to the Display & Sensor Board. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Flasher lab · Passthrough</title>
+<link rel="stylesheet" href="../assets/suite.css">
+<link rel="stylesheet" href="../assets/styles.css">
+<link rel="stylesheet" href="passthrough.css">
+</head>
+<body class="pt-body">
+<header class="pt-head">
+  <div class="pt-intro">
+    <div class="eyebrow">Flasher lab · passthrough</div>
+    <h1 class="pt-title">How a bridge board gets its firmware</h1>
+    <p class="pt-note">Three ways to show it, driven by one player. The Display &amp; Sensor Board has no USB, so the Main PCBA passes its USB through. All <b>made up</b>, and nothing connects. <a href="layout.html">‹ Layout lab</a></p>
+  </div>
+  <div class="pt-ctl">
+    <button class="btn btn-primary" id="pt-play">Play</button>
+    <span class="seg" id="pt-steps"></span>
+    <span class="seg" id="pt-theme"><button data-v="light">Light</button><button data-v="dark">Dark</button></span>
+  </div>
+</header>
+<p class="pt-caption" id="pt-caption" aria-live="polite"></p>
+<main class="pt-grid">
+  <section class="card pt-card">
+    <div class="pt-card-h"><b>A · Signal path</b><span>Three stops in a row, the live link moving. For the top of the update steps.</span></div>
+    <div id="pt-a"></div>
+  </section>
+  <section class="card pt-card">
+    <div class="pt-card-h"><b>B · The bench</b><span>The computer and both boards drawn, packets along the cables. For the About fold, or first use.</span></div>
+    <div id="pt-b"></div>
+  </section>
+  <section class="card pt-card pt-card-c">
+    <div class="pt-card-h"><b>C · Compact, with a block map</b><span>One line for the firmware list or the flash card, and the blocks it compares and rewrites.</span></div>
+    <div id="pt-c"></div>
+  </section>
+</main>
+<script src="passthrough.js"></script>
+</body>
+</html>

@@ -245,8 +245,10 @@
     var units = image.units, changed = [], t0 = Date.now();
     for (var i = 0; i < units.length; i++) {
       var u = units[i];
-      if ((await bl.crc(u.addr, u.size)) !== u.crc) changed.push(u);
-      progress({ phase: 'compare', done: i + 1, total: units.length });
+      var differs = (await bl.crc(u.addr, u.size)) !== u.crc;
+      if (differs) changed.push(u);
+      // index and differs feed the page's block map (assets/route.js).
+      progress({ phase: 'compare', done: i + 1, total: units.length, index: i, differs: differs });
     }
     var bytes = changed.reduce(function (n, x) { return n + x.size; }, 0);
     log('Compared ' + units.length + ' blocks in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s: ' + changed.length + ' differ.');
@@ -281,6 +283,7 @@
         progress({ phase: 'write', done: done, total: bytes, addr: c.addr });
       }
       if ((await bl.crc(c.addr, c.size)) !== c.crc) throw BootError('The block at ' + hex(c.addr) + ' doesn’t read back as written.', 'verify');
+      progress({ phase: 'checked', done: done, total: bytes, addr: c.addr });
     }
     try {
       await bl.call(CMD.COMMIT, le32(image.commit.crc).concat(le32(image.commit.length)), 5000);

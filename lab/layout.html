@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<!-- Design lab: a new layout for Flasher, with top-bar tabs for Serial bootloader, Debug probe, and Console.
+     Not loaded by the tool. Everything here is mocked: no USB, no serial, no GitHub, no tokens. The firmware
+     is the made-up Smart Thermostat demo (Acme Climate). -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Flasher lab · Layout</title>
+<link rel="stylesheet" href="../assets/suite.css">
+<link rel="stylesheet" href="../assets/styles.css">
+<link rel="stylesheet" href="layout.css">
+</head>
+<body class="lx-body">
+<header class="lx-lab-head">
+  <div class="lx-lab-intro">
+    <div class="eyebrow">Flasher lab · layout</div>
+    <h1 class="lx-lab-title">Tabs across the top</h1>
+    <p class="lx-lab-note">Serial bootloader, Debug probe, and Console as top-bar tabs. The tools work signed out; only project firmware needs GitHub. Everything below is <b>mocked</b> with the made-up thermostat.</p>
+  </div>
+  <div class="lx-lab-ctl">
+    <label class="lx-ctl"><span>Who</span>
+      <span class="seg" id="ctl-who">
+        <button data-v="out">Signed out</button>
+        <button data-v="fte">FTE</button>
+        <button data-v="contractor">Contractor</button>
+      </span>
+    </label>
+    <label class="lx-ctl"><span>Theme</span>
+      <span class="seg" id="ctl-theme">
+        <button data-v="light">Light</button>
+        <button data-v="dark">Dark</button>
+      </span>
+    </label>
+    <label class="lx-ctl" title="Lab only: whether the board answers Flasher's USB restart"><span>USB restart</span>
+      <span class="seg" id="ctl-restart">
+        <button data-v="ok">Answers</button>
+        <button data-v="no">No answer</button>
+      </span>
+    </label>
+    <details class="lx-qs">
+      <summary>Decisions</summary>
+      <ol>
+        <li><b>The layout is B</b> (Chris, 2026-11-17): tabs across the top, the firmware list and the suite's sidebar foot in a rail on the left.</li>
+        <li><b>One page, three tabs</b> (Chris, 2026-11-17, replacing "separate pages"). The Console stays connected while you flash or program with the probe; one page owns the serial ports, so a flash pauses the Console and reopens it; the probe's code loads the first time its tab opens. <code>probe.html</code> becomes a link to the tab.</li>
+        <li><b>Both the bootloader and the probe flash project firmware</b> from GitHub once signed in: the firmware picked in the rail is what either tab writes. Files from this computer work signed out in both.</li>
+        <li><b>A file flashes the USB way first.</b> Flasher tries the 1200-baud restart on a serial port the person picks. If the board doesn't answer, it says so and gives the BOOT0 steps.</li>
+        <li><b>The Console opens any serial port</b> and behaves like a terminal: type straight into it. It fills the page.</li>
+      </ol>
+    </details>
+    <a class="lx-qs-link" href="passthrough.html">Passthrough graphics ›</a>
+  </div>
+</header>
+
+<div class="lx-frame" id="frame"></div>
+<div class="toasts" id="toasts"></div>
+<script src="layout.js"></script>
+</body>
+</html>

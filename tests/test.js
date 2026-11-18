@@ -547,6 +547,27 @@
     await link.close();
   });
 
+  test('update: progress names each block as it’s compared and as it’s read back (the block map)', async function () {
+    var now = bridgeImage(9), plan = bridgePlan(now), sim = bridgeSim(bridgeImage(9, true)), link = new B.Link(FB.port(sim)), seen = [], checked = [];
+    await link.open(1000000);
+    await B.update(link, plan.image, { expect: EXPECT, fetchPart: function (p) { return Promise.resolve(plan.files[p.path]); },
+      progress: function (p) { if (p.phase === 'compare') seen[p.index] = p.differs; if (p.phase === 'checked') checked.push(p.addr); } });
+    eq(seen.length, plan.image.units.length, 'every block reported');
+    eq(seen.filter(Boolean).length, 2, 'two differ');
+    eq(plan.image.units.filter(function (u, i) { return seen[i]; }).map(function (u) { return u.addr; }).join(), checked.join(), 'the differing ones are read back');
+    await link.close();
+  });
+
+  test('route: the block map fills by erase, write, and verify', function () {
+    var R = FL.route;
+    eq(R.passes(4, 0, 0, 0).join(), 'unk,unk,unk,unk');
+    eq(R.passes(4, 0.5, 0, 0).join(), 'erased,erased,now,unk', 'the block being erased blinks');
+    eq(R.passes(4, 1, 0.5, 0).join(), 'diff,diff,now,erased');
+    eq(R.passes(4, 1, 1, 1).join(), 'done,done,done,done');
+    var h = R.html({ nodes: [{ icon: 'pc', name: 'This computer', status: 'Done', good: true }, { icon: 'board', name: 'A <b>', status: 'x' }], links: [false], cells: ['done'], legend: [['done', 'Checked']] });
+    ok(h.indexOf('A &lt;b&gt;') > 0, 'names are escaped'); ok(h.indexOf('fl-blk done') > 0);
+  });
+
   test('update: up to date writes nothing; an unfinished update is finished even so', async function () {
     var now = bridgeImage(4), plan = bridgePlan(now), sim = bridgeSim(now), link = new B.Link(FB.port(sim));
     await link.open(1000000);

@@ -11,6 +11,7 @@
   'use strict';
   var D = FL.dfuse, I = FL.image, C = FL.catalog;
   var DEMO = /[?&]demo\b/.test(location.search);
+  var DEMO_PROBE = (/[?&]demo=(\w+)/.exec(location.search) || [])[1] || '';   // ?demo=h5: the probe's H563
   var $ = function (s, r) { return (r || document).querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function fmtDate(iso) {
@@ -41,9 +42,12 @@
     view: 'home', fwId: '',            // view: 'home' | 'fw' | 'local'
     local: null,                       // { name, bytes, sha256, boardId }
     skipTouch: false,
-    tab: 'flash',                      // the firmware panel's tab: 'flash' | 'console'
+    // The page's tab (Chris, 2026-11-17): 'serial' (the bootloader), 'probe' (a debug probe), or
+    // 'console' (any serial port). Each has its own pane, kept while another shows.
+    tab: (/[?&]tab=(probe|console)\b/.exec(location.search) || [])[1] || 'serial',
     run: null,                         // the flash in progress or last finished, for the current firmware
-    con: null                          // { text, open, demo }
+    con: null,                         // { open, connecting, error, name, paused }
+    conBaud: 115200, conFilter: ''     // the console's rate, and which board's ports to list ('' = any)
   };
   var demoBoard = { running: true };   // the simulated board's state in ?demo
 
@@ -120,7 +124,8 @@
   }
   function setUrl() {
     var c = current(), q = [];
-    if (DEMO) q.push('demo');
+    if (DEMO) q.push(DEMO_PROBE === 'h5' ? 'demo=h5' : 'demo');
+    if (S.tab !== 'serial') q.push('tab=' + S.tab);
     if (c && !c.fw.local) q.push('fw=' + c.fw.board + '/' + c.fw.id);
     try { history.replaceState(null, '', location.pathname + (q.length ? '?' + q.join('&') : '')); } catch (e) { /* file:// */ }
   }
@@ -132,15 +137,42 @@
     var v = $('#view'), c = current();
     if ((S.view === 'fw' || S.view === 'local') && !c) S.view = 'home';
     if (S.view === 'people' && !S.loading && !(S.catalog && S.catalog.fte)) S.view = 'home';
+    renderTabs();
     if (S.loading && linked) return;   // keep ?fw= in the address until the list is here
-    var termFocused = document.activeElement && document.activeElement.id === 'term-in';
     v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : fwHtml(current());
-    if ($('#term')) { drawTerm(); var tb = $('#term'); tb.scrollTop = tb.scrollHeight; if (termFocused) focusTerm(); }
+    if (S.tab === 'console') renderConsole();
+    // The probe draws itself; it's redrawn here only when its tab opens, so a sync or a fetch finishing
+    // never wipes what's typed in its fields.
+    if (S.tab === 'probe' && !probeWas) showProbe();
+    probeWas = S.tab === 'probe';
     $('#people-link').hidden = !(S.catalog && S.catalog.fte && !DEMO);
-    $('#people-link').classList.toggle('active', S.view === 'people');
-    $('#toolbar-title').textContent = c ? c.fw.name : S.view === 'people' ? 'People & access' : 'Flasher';
-    document.title = (c ? c.fw.name + ' · ' : '') + 'Flasher';
+    $('#people-link').classList.toggle('active', S.view === 'people' && S.tab === 'serial');
+    document.title = (S.tab === 'probe' ? 'Debug probe · ' : S.tab === 'console' ? 'Console · ' : c ? c.fw.name + ' · ' : '') + 'Flasher';
     setUrl();
+  }
+
+  // ── The tabs across the top, and what's connected on the current one ──
+  var TABS = [
+    ['serial', 'Serial bootloader', 'Serial', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5v10"/><path d="M7 5.5l3-3 3 3"/><rect x="6" y="12.5" width="8" height="5" rx="1.2"/></svg>'],
+    ['probe', 'Debug probe', 'Probe', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 10h4l2-4.5 3 9 2-4.5h4"/></svg>'],
+    ['console', 'Console', 'Console', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M6 8l2.5 2L6 12M10.5 12.5h3.5"/></svg>']
+  ];
+  function probeStatus() { return FL.probeApp && FL.probeApp.status ? FL.probeApp.status() : { on: false, text: 'No probe' }; }
+  function renderTabs() {
+    var ps = probeStatus(), cs = S.con || {};
+    $('#toptabs').innerHTML = TABS.map(function (t) {
+      var live = t[0] === 'console' ? (cs.open || cs.paused ? '<span class="fl-live' + (cs.paused ? ' paused' : '') + '" title="' + (cs.paused ? 'Paused for a flash' : 'Connected') + '"></span>' : '')
+        : t[0] === 'probe' && ps.on ? '<span class="fl-live" title="Connected"></span>' : '';
+      return '<button role="tab" data-act="top-tab" data-tab="' + t[0] + '" class="' + (S.tab === t[0] ? 'on' : '') + '" aria-selected="' + (S.tab === t[0]) + '">' +
+        t[3] + '<span class="fl-tab-long">' + t[1] + '</span><span class="fl-tab-short">' + t[2] + '</span>' + live + '</button>';
+    }).join('');
+    ['serial', 'probe', 'console'].forEach(function (k) { $('[data-pane="' + k + '"]').hidden = S.tab !== k; });
+    // The chip beside the tabs: what this tab is connected to.
+    var tone = '', text;
+    if (S.tab === 'probe') { tone = ps.busy ? 'busy' : ps.on ? 'ok' : ''; text = ps.text; }
+    else if (S.tab === 'console') { tone = cs.paused || cs.connecting ? 'busy' : cs.open ? 'ok' : ''; text = cs.paused ? 'Paused for a flash' : cs.open ? (cs.name || 'Serial port') + ' · ' + S.conBaud + ' baud' : cs.connecting ? 'Connecting…' : 'No port open'; }
+    else { var r = S.run; tone = r && r.busy ? 'busy' : r && r.ok ? 'ok' : r && r.error ? 'error' : ''; text = r && r.busy ? (r.phase || 'Working…') : r && r.ok ? 'Done' : r && r.error ? r.errorTitle : 'No board'; }
+    $('#conn').innerHTML = '<span class="sync-dot"' + (tone ? ' data-tone="' + tone + '"' : '') + '></span>' + esc(text);
   }
 
   // The sidebar, as in Signoff EE: firmware grouped by project, each group folding (kept per browser),
@@ -180,13 +212,13 @@
       }).join('');
       if (!h) h = '<div class="side-empty">' + (q ? 'No matching firmware.' : 'No firmware yet.') + '</div>';
     } else if (S.loading) h = '<div class="side-empty">Loading firmware…</div>';
-    else if (!DEMO && !C.auth.token()) h = '<div class="side-empty">Sign in to see firmware.</div>';
-    if (S.local) {
-      h += '<div class="side-group"><div class="side-group-head fl-static-head"><span class="side-group-name">From this computer</span></div>' +
-        '<button class="proj' + (S.view === 'local' ? ' active' : '') + '" data-act="open-local">' + FW_ICON + '<span class="proj-body"><span class="proj-name">' + esc(S.local.name) +
-        '</span><span class="proj-sub">' + esc(I.fmtBytes(S.local.bytes.length)) + '</span></span></button></div>';
-    }
-    list.innerHTML = h;
+    else if (!DEMO && !C.auth.token()) h = '<div class="side-empty">Projects’ firmware is private: <a href="#" data-act="account">sign in</a> to see what’s shared with you. A file, the probe, and the console work without it.</div>';
+    // A file from this computer, always first: it works signed out.
+    var fileRow = '<button class="proj fl-file-row' + (S.view === 'local' ? ' active' : '') + '" data-act="' + (S.local ? 'open-local' : 'open-file') + '" title="Flash a .bin file from this computer">' +
+      '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
+      '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
+      esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, flashed to any STM32') + '</span></span></button>';
+    list.innerHTML = fileRow + h;
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
   }
@@ -273,8 +305,9 @@
     h += browserNote();
     if (S.loading) return h + '<div class="card fl-pad"><p class="fl-muted">Loading firmware from ' + esc(DEMO ? 'the demo' : FL.config.owner + '/' + FL.config.repo) + '…</p></div></div>';
     if (!DEMO && !C.auth.token()) {
-      return h + '<div class="card empty"><div class="empty-art">' + ICON.key + '</div><h2>Sign in to list firmware</h2>' +
-        '<p>The firmware lives in a private GitHub repository. Sign in with the GitHub access you use for Signoff; if you’re signed in to Signoff EE in this browser, you’re already set.</p>' +
+      return h + '<div class="card empty"><div class="empty-art">' + ICON.key + '</div><h2>Projects’ firmware is private</h2>' +
+        '<p>Sign in with the GitHub access you use for Signoff to see the projects shared with you; if you’re signed in to Signoff EE in this browser, you’re already set. ' +
+        'Flashing a file from this computer, the Debug probe, and the Console all work without signing in.</p>' +
         '<div class="fl-row fl-center">' + (ghAuth() ? '<button class="btn btn-primary" data-act="gh-signin">Sign in with GitHub</button><button class="btn" data-act="account">Use a token…</button>'
           : '<button class="btn btn-primary" data-act="account">Sign in…</button>') + '<button class="btn" data-act="open-file">Open a .bin file…</button></div>' +
         '<p class="note">Just looking? <a href="?demo">Try the demo</a>, which flashes a simulated board.</p></div></div>';
@@ -326,7 +359,8 @@
       var opts = Object.keys(boards()).filter(function (id) { return boards()[id].kind !== 'bridge'; }).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + '</option>'; }).join('');
       h += '<div class="card fl-pad"><div class="field"><label for="local-board">Board</label><select class="input" id="local-board" data-change="local-board">' + opts +
         '<option value=""' + (S.local.boardId && boards()[S.local.boardId] ? '' : ' selected') + '>' + esc(I.GENERIC.name) + '</option></select></div>' +
-        '<p class="note">The board decides the checks (flash size, RAM) and how it’s put in update mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p></div>';
+        '<p class="note">The board decides the checks (flash size, RAM) and how it’s put in update mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p>' +
+        '<div class="fl-row"><button class="btn" data-act="open-file">Open another file…</button></div></div>';
     } else if (fw.description) {
       // Collapsible; the choice is kept for this browser (flasher.v1.about).
       h += '<details class="card fl-about" data-toggle="about"' + (aboutOpen() ? ' open' : '') + '><summary><span class="fl-about-title">About this firmware</span>' +
@@ -334,23 +368,62 @@
         '<svg class="fl-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>' +
         '<div class="fl-desc">' + esc(fw.description) + '</div></details>';
     }
-    // One panel: Flash, and the board's console beside it when the board has a serial port.
-    if (b.kind === 'bridge') {
-      return h + '<div class="card fl-panel"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(BRIDGE_TAB) + '</button></div>' +
-        '<div class="fl-tab-body">' + bridgeHtml(c, run) + '</div></div></div>';
-    }
-    var tabs = !!(b.run && (DEMO || navigator.serial));
-    if (!tabs) S.tab = 'flash';
-    h += '<div class="card fl-panel">';
-    if (tabs) {
-      var live = S.con && S.con.open;
-      h += '<div class="fl-tabs" role="tablist">' +
-        '<button role="tab" data-act="tab" data-tab="flash" class="' + (S.tab === 'flash' ? 'on' : '') + '" aria-selected="' + (S.tab === 'flash') + '">Flash</button>' +
-        '<button role="tab" data-act="tab" data-tab="console" class="' + (S.tab === 'console' ? 'on' : '') + '" aria-selected="' + (S.tab === 'console') + '">Console' +
-        (live ? '<span class="fl-live" title="Connected"></span>' : '') + '</button></div>';
-    }
-    h += '<div class="fl-tab-body">' + (S.tab === 'console' ? consoleHtml(c) : flashHtml(c, run)) + '</div></div>';
+    // One panel: the update. The board's console is the Console tab.
+    h += '<div class="card fl-panel"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(b.kind === 'bridge' ? BRIDGE_TAB : 'Flash') + '</button></div>' +
+      '<div class="fl-tab-body">' + (b.kind === 'bridge' ? bridgeHtml(c, run) : flashHtml(c, run)) + '</div></div>';
     return h + '</div>';
+  }
+
+  // ── The route diagram above each update (assets/route.js) ──
+  function cellCount(bytes) { return Math.max(8, Math.min(48, Math.ceil((bytes || 0) / 4096) || 24)); }
+  function directRoute(c, run) {
+    var b = c.board, generic = b.id === I.GENERIC.id, bname = generic ? 'The board' : b.name;
+    var pc = 'Ready', bs = generic ? 'Not connected yet' : b.run ? 'Running its firmware' : 'Not connected yet', link = false, pcLive = false, bLive = false, good = false;
+    if (run) {
+      if (run.ok) { pc = 'Done'; bs = 'Running ' + c.fw.name; good = true; }
+      else if (run.error) { pc = 'Stopped'; bs = run.step === 'write' ? 'Still in update mode' : bs; }
+      else if (run.waitPick) { pc = 'Waiting for you to pick it'; bs = run.step === 'restart' ? bs : 'In update mode?'; }
+      else if (run.step === 'restart') { pc = 'Restarting the board'; bs = 'Going into update mode'; link = pcLive = bLive = true; }
+      else if (run.step === 'write') { pc = (run.phase || 'Writing').split(' · ')[0]; bs = 'Update mode (DFU)'; link = pcLive = bLive = true; }
+      else if (run.step === 'start') { pc = 'Starting it'; bs = 'Restarting'; link = pcLive = bLive = true; }
+    }
+    var size = bytesFor && bytesFor.key === runKey() ? bytesFor.bytes.length : c.fw.size, n = cellCount(size), fr = (run && run.frac) || {};
+    var cells = run && run.ok ? FL.route.passes(n, 1, 1, 1) : FL.route.passes(n, fr.erase || 0, fr.write || 0, fr.verify || 0);
+    var note = run && run.busy && run.phase ? run.phase : run && run.ok ? I.fmtBytes(run.bytes || size) + ' written and read back' : I.fmtBytes(size) + ', drawn as ' + n + ' blocks';
+    return FL.route.html({
+      nodes: [{ icon: 'pc', name: 'This computer', status: pc, on: true, live: pcLive, good: good }, { icon: 'board', name: bname, status: bs, on: link || good, live: bLive, good: good }],
+      links: [link], note: note, cells: cells, cellsLabel: 'The image in ' + n + ' blocks',
+      legend: [['unk', 'Not written yet'], ['erased', 'Erased'], ['diff', 'Written'], ['done', 'Read back and checked']]
+    });
+  }
+  function bridgeRoute(c, run) {
+    var b = c.board, units = c.fw.units || [];
+    // The host by its board's name when the manifest has that board (its firmware's USB id), else by its port's.
+    var bs = boards(), hostId = Object.keys(bs).filter(function (id) { return bs[id].kind !== 'bridge' && (bs[id].runs || []).some(function (r) { return b.runs.some(function (t) { return t.vid === r.vid && t.pid === r.pid; }); }); })[0];
+    var host = hostId ? bs[hostId].name : FL.serial.portNames(b.runs, 'The host board');
+    var ph = !run ? 'idle' : run.ok ? 'done' : run.error ? 'stopped' : run.waitPick ? 'pick' : run.step === 'restart' ? 'knock' : run.step === 'start' ? 'leave' : 'pass';
+    var st = {
+      idle: ['Ready', 'Its own firmware', 'Its own firmware · no USB'],
+      knock: ['Knocking at ' + b.touchBaud + ' baud', 'Opening its passthrough', 'Its own firmware · no USB'],
+      pick: ['Waiting for you to pick it', 'Passthrough?', 'Its bootloader?'],
+      pass: [(run && run.phase || 'Talking to the board').split(' · ')[0], 'Passthrough', 'Bootloader'],
+      leave: ['Saying goodbye', 'Back to its own firmware', 'Restarting'],
+      done: ['Done', 'Its own firmware', 'Running ' + c.fw.name],
+      stopped: ['Stopped', run && run.begun ? 'Passthrough closed' : 'Its own firmware', run && run.begun ? 'Waiting in its bootloader' : 'Its own firmware · no USB']
+    }[ph];
+    var usb = ph === 'knock' || ph === 'pass' || ph === 'leave', uart = ph === 'pass';
+    var cells = (run && run.cells) || units.map(function () { return 'unk'; });
+    if (run && run.ok && !run.compareOnly) cells = cells.map(function (s) { return s === 'unk' ? 'same' : s === 'diff' || s === 'now' ? 'done' : s; });
+    var n = run && run.cells ? run.cells.filter(function (s) { return s === 'diff' || s === 'now' || s === 'done'; }).length : 0;
+    var note = run && run.busy && run.phase ? run.phase : run && run.ok && run.result ? (run.result.changed.length ? run.result.changed.length + ' of ' + units.length + ' blocks ' + (run.compareOnly ? 'differ' : 'rewritten') : 'Already up to date') :
+      units.length + ' blocks, ' + I.fmtBytes(c.fw.size);
+    return FL.route.html({
+      nodes: [{ icon: 'pc', name: 'This computer', status: st[0], on: true, live: usb, good: ph === 'done' },
+        { icon: 'host', name: host, status: st[1], on: usb || uart, live: uart || ph === 'knock' },
+        { icon: 'target', name: b.name, status: st[2], on: uart || ph === 'done', live: uart, good: ph === 'done' && !run.compareOnly }],
+      links: [usb, uart], note: note, cells: cells, cellsLabel: units.length + ' blocks, ' + n + ' different',
+      legend: [['unk', 'Not checked yet'], ['same', 'Same, left alone'], ['diff', 'Differs'], ['done', 'Rewritten and read back']]
+    });
   }
 
   var ABOUT_KEY = 'flasher.v1.about';
@@ -370,20 +443,26 @@
     var h = '<div class="fl-flash">';
     if (chk && chk.errors.length) h += '<div class="hint fl-bad"><b>This image can’t be flashed</b>' + chk.errors.map(esc).join('<br>') + '</div>';
     if (chk && chk.warnings.length) h += '<div class="hint fl-warn"><b>Check</b>' + chk.warnings.map(esc).join('<br>') + '</div>';
-    var canTouch = !!(b.run && (DEMO || navigator.serial)), byHand = !canTouch || S.skipTouch;
+    // A file flashed as any STM32 tries the restart too, on whichever serial port is picked (Chris,
+    // 2026-11-17): an Arduino-style board answers; if none does, the board is put in update mode by hand.
+    var generic = b.id === I.GENERIC.id;
+    var canTouch = !!((b.run || generic) && (DEMO || navigator.serial)), byHand = !canTouch || S.skipTouch;
     var dfuName = b.dfu.name || 'DFU in FS Mode';
+    h = '<div id="fl-route-box">' + directRoute(c, run) + '</div>' + h;
     h += '<p class="fl-intro">Connect the board to USB and click <b>Flash board</b>. When first connected, Chrome may ask you to pick the board twice. After that flashing is one click.</p>';
     h += '<ol class="fl-steps">';
     h += '<li class="fl-step ' + stepState(run, 'restart') + '"><span class="fl-num">1</span><div><div class="fl-step-title">Put the board in update mode</div>' +
       (canTouch && !S.skipTouch
-        ? '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.' +
-          (detachIds(b).length ? ' If the board runs <b>' + detachIds(b).map(function (x) { return esc(x.name || hex4(x.vid) + ':' + hex4(x.pid)); }).join('</b> or <b>') + '</b> instead, close that list, click <b>Pick…</b>, and choose it there: Flasher restarts it over USB.' : '') + '</div>'
+        ? (generic
+          ? '<div class="fl-step-sub">Flasher tries to restart the board into update mode. Chrome shows a list of serial ports: pick the board’s and click <b>Connect</b>. A board whose firmware listens for a 1200-baud restart (Arduino-style boards do) goes into update mode on its own. If it doesn’t answer, Flasher says so and shows the BOOT0 steps.</div>'
+          : '<div class="fl-step-sub">Flasher restarts the board so it can take new firmware. <i>First time:</i> Chrome shows a list. Pick <b>' + esc(FL.serial.portNames(b.runs, 'the board')) + '</b> and click <b>Connect</b>.' +
+            (detachIds(b).length ? ' If the board runs <b>' + detachIds(b).map(function (x) { return esc(x.name || hex4(x.vid) + ':' + hex4(x.pid)); }).join('</b> or <b>') + '</b> instead, close that list, click <b>Pick…</b>, and choose it there: Flasher restarts it over USB.' : '') + '</div>')
         : '<div class="fl-step-sub">Press these on the board, then click <b>Flash board</b>:</div>' + buttonsHtml(b)) +
-      (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> The board isn’t running firmware (new, blank, or stuck)</label>' : '') +
+      (canTouch ? '<label class="fl-check"><input type="checkbox" data-change="skip"' + (S.skipTouch ? ' checked' : '') + (busy ? ' disabled' : '') + '> ' +
+        (generic ? 'The board is already in update mode (BOOT0 held at reset), or runs no firmware' : 'The board isn’t running firmware (new, blank, or stuck)') + '</label>' : '') +
       '</div></li>';
     h += '<li class="fl-step ' + stepState(run, 'write') + '"><span class="fl-num">2</span><div><div class="fl-step-title">Write the firmware</div>' +
       '<div class="fl-step-sub"><i>First time:</i> Chrome shows ' + (byHand ? 'a' : 'a second') + ' list. Pick <b>' + esc(dfuName) + '</b> and click <b>Connect</b>. Flasher erases the board, writes the firmware, and reads it back to check every byte.</div>' +
-      (run && (run.step === 'write' || run.ok) ? '<div class="busy-bar fl-bar"><i style="width:' + Math.round((run.ok ? 1 : run.pct || 0) * 100) + '%"></i></div><div class="fl-step-sub fl-phase">' + esc(run.ok ? 'Written and checked' : run.phase || '') + '</div>' : '') +
       '</div></li>';
     h += '<li class="fl-step ' + stepState(run, 'start') + '"><span class="fl-num">3</span><div><div class="fl-step-title">Run it</div>' +
       '<div class="fl-step-sub">The board restarts and runs the new firmware. Nothing to do.</div></div></li>';
@@ -394,7 +473,7 @@
     var blocked = (chk && chk.errors.length) || (!DEMO && !navigator.usb) || !S.bytesReady;
     if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-dfu">' + esc(pickLabel(b)) + '</button>';
     else h += '<button class="btn btn-primary" data-act="flash"' + (busy || blocked ? ' disabled' : '') + '>' + (busy ? 'Flashing…' : run && run.ok ? 'Flash again' : 'Flash board') + '</button>';
-    if (run && run.ok && b.run && (DEMO || navigator.serial)) h += '<button class="btn" data-act="console">Open console</button>';
+    if (run && run.ok && b.run && (DEMO || navigator.serial) && !(S.con && (S.con.open || S.con.paused))) h += '<button class="btn" data-act="console-board">Open its console</button>';
     if (!S.bytesReady && !S.bytesError) h += '<span class="fl-muted">Fetching the image…</span>';
     if (S.bytesError) h += '<span class="fl-muted fl-bad-text">' + esc(S.bytesError) + '</span>';
     h += '</div>';
@@ -414,20 +493,35 @@
       '<p>A failed or interrupted flash can always be retried this way. If “' + esc(b.dfu.name || 'DFU in FS Mode') + '” never appears in Chrome’s list on Windows, set up the <a href="#" data-act="driver">Windows driver</a>.</p>';
   }
 
-  function consoleHtml(c) {
-    var st = S.con || {}, busy = S.run && S.run.busy;
-    var tone = st.open ? 'ok' : st.connecting ? 'busy' : st.error ? 'error' : 'idle';
-    var label = st.open ? 'Connected to ' + (st.name || FL.serial.portNames(c.board.runs, 'the board')) : st.connecting ? 'Connecting…' : st.error ? st.error : 'Not connected';
-    return '<div class="fl-con-bar"><span class="sync-dot" data-tone="' + tone + '"></span><span class="fl-con-status">' + esc(label) + '</span><span class="fl-grow"></span>' +
-      (st.open ? '<button class="btn" data-act="console-close">Disconnect</button>'
-        : '<button class="btn btn-primary" data-act="console"' + (st.connecting || busy ? ' disabled' : '') + '>Connect</button>') +
-      '<button class="btn" data-act="term-clear" title="Clear this window (the board isn’t told)">Clear</button></div>' +
-      '<div class="fl-term" id="term"><pre id="term-out">' + term.html(false) + '</pre>' +
+  // ── The Console tab: any serial port, a terminal filling the page (Chris, 2026-11-17) ──
+  var BAUDS = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+  function conBoards() {   // the boards whose ports the list can be narrowed to (signed in)
+    var bs = boards(); return Object.keys(bs).filter(function (id) { return bs[id].runs && bs[id].runs.length; }).map(function (id) { return bs[id]; });
+  }
+  function renderConsole() {
+    var box = $('#console-view'), st = S.con || {};
+    var termFocused = document.activeElement && document.activeElement.id === 'term-in';
+    var tone = st.open ? 'ok' : st.connecting || st.paused ? 'busy' : st.error ? 'error' : 'idle';
+    var label = st.paused ? 'Paused while the board is flashed; it reopens after' : st.open ? 'Connected to ' + (st.name || 'the port') + ' at ' + S.conBaud + ' baud' : st.connecting ? 'Connecting…' : st.error ? st.error : 'Not connected';
+    var cb = conBoards(), locked = st.open || st.connecting || st.paused;
+    var h = '<div class="fl-con-page"><div class="fl-con-strip">' +
+      (st.open || st.paused ? '<button class="btn" data-act="console-close">Disconnect</button>'
+        : '<button class="btn btn-primary" data-act="console"' + (st.connecting ? ' disabled' : '') + '>Choose a port…</button>') +
+      (cb.length ? '<select class="input" data-change="con-filter" title="Which ports Chrome lists"' + (locked ? ' disabled' : '') + '><option value="">Any serial port</option>' +
+        cb.map(function (b) { return '<option value="' + esc(b.id) + '"' + (S.conFilter === b.id ? ' selected' : '') + '>' + esc(b.name) + '</option>'; }).join('') + '</select>' : '') +
+      '<select class="input" data-change="con-baud" title="Baud rate"' + (locked ? ' disabled' : '') + '>' + BAUDS.map(function (r) { return '<option' + (r === S.conBaud ? ' selected' : '') + '>' + r + '</option>'; }).join('') + '</select>' +
+      '<span class="sync-dot" data-tone="' + tone + '"></span><span class="fl-con-status">' + esc(label) + '</span><span class="fl-grow"></span>' +
+      '<button class="btn" data-act="term-clear" title="Clear this window (the board isn’t told)">Clear</button>' +
+      '<button class="btn" data-act="term-save" title="Save everything in this window as a text file">Save log…</button></div>' +
+      '<div class="fl-con-body"><div class="fl-term" id="term"><pre id="term-out">' + term.html(false) + '</pre>' +
       // The keys go through a hidden field, as in xterm.js: special keys arrive as keydowns, and text
       // from a phone keyboard, dictation, or an input method arrives as input.
       '<textarea class="fl-term-in" id="term-in" aria-label="Console: keys go to the board" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea></div>' +
-      '<p class="note">Click in the console and type: every key goes to the board, which echoes it and edits the line. On a board whose console edits its own line, Up and Down recall history, Tab completes, and Ctrl-L or <b>clear</b> clears. ' +
-      'Ctrl-C copies when text is selected, and otherwise goes to the board. The port opens at 115200 baud, never 1200, which would restart the board into its bootloader. Close the Arduino IDE’s Serial Monitor first: only one program can have the port.</p>';
+      '<p class="note">Any USB serial device: a board running its firmware, a USB-UART cable, or a probe’s virtual COM port. Click in the console and type: every key goes to the device as you type. Up and Down recall history, Tab completes, and Ctrl-L clears on a board whose console edits its own line. ' +
+      'Ctrl-C copies when text is selected, and otherwise goes to the device. Flashing the same board from the Serial bootloader tab pauses the console and reopens it after.</p></div></div>';
+    box.innerHTML = h;
+    drawTerm(); var tb = $('#term'); if (tb) tb.scrollTop = tb.scrollHeight;
+    if (termFocused) focusTerm();
   }
 
   // ── The image for the current firmware ──
@@ -443,10 +537,12 @@
       if (runKey() !== key) return;
       bytesFor = { key: key, bytes: bytes };
       S.check = I.check(bytes, c.board); S.bytesReady = true; render();
+      if (S.tab === 'probe') probeTakes();
     }, function (e) {
       if (runKey() !== key) return;
       S.bytesError = e.code === 'mismatch' ? 'The file in the repo doesn’t match its recorded SHA-256, so it won’t be flashed. Publish it again.' : (e.message || String(e));
       render();
+      if (S.tab === 'probe') probeTakes();
     });
   }
 
@@ -492,7 +588,7 @@
     return again();
   }
   function pickSerial(b) {
-    if (DEMO) return Promise.resolve(demoBoard.running ? FL.fakeusb.serialPort({ vid: b.run.vid, pid: b.run.pid }) : null);
+    if (DEMO) return Promise.resolve(demoBoard.running ? FL.fakeusb.serialPort(b.run ? { vid: b.run.vid, pid: b.run.pid } : { vid: 0x2341, pid: 0x8036 }) : null);
     return navigator.serial.getPorts().then(function (ports) {
       var mine = ports.filter(function (p) { return FL.serial.matches(p.getInfo(), b.runs); });
       if (mine.length === 1) return mine[0];
@@ -514,18 +610,18 @@
     if (!c || !bytesFor || bytesFor.key !== runKey() || (S.run && S.run.busy)) return;
     var b = c.board;
     S.run = { key: runKey(), busy: true, step: 'restart', log: [], pct: 0, phase: '', t0: Date.now() };
-    // A console left open holds the board's serial port, and the restart request needs it.
-    var closing = closeConsole();
-    S.con = null; S.tab = 'flash';
+    // A console open on this board holds its serial port, and the restart request needs it: it pauses,
+    // and reopens when the flash is over (resumeConsole).
+    var closing = pauseConsoleFor(b);
     upd();
-    var touched = false;
+    var touched = false, generic = b.id === I.GENERIC.id;
     closing.catch(function () {}).then(function () { return findDfu(b); }).then(function (dev) {
       if (dev) { log('Found the board already in update mode (' + dev.productName + ').'); return dev; }
       if (S.skipTouch) return null;
       // A board running firmware that takes DFU detach (and this browser may already open it).
       return findDetach(b).then(function (rt) {
         if (rt) return detachThenWait(rt, b).then(function (d) { touched = true; return d; });
-        if (!b.run || (!DEMO && !navigator.serial)) return null;
+        if (!(b.run || generic) || (!DEMO && !navigator.serial)) return null;
         return pickSerial(b).then(function (port) {
           if (!port) {
             log(detachIds(b).length
@@ -533,8 +629,9 @@
               : 'No running board picked; looking for one already in update mode.');
             return null;
           }
-          log('Restarting the board into its bootloader (' + b.touchBaud + '-baud touch)…');
-          return FL.serial.touch(port, { baud: b.touchBaud }).then(function () {
+          var baud = b.touchBaud || 1200;
+          log('Restarting the board into its bootloader (' + baud + '-baud touch)…');
+          return FL.serial.touch(port, { baud: baud }).then(function () {
             touched = true;
             if (DEMO) setTimeout(function () { demoBoard.running = false; }, 700);
             log('Waiting for the board to come back in update mode…');
@@ -545,7 +642,10 @@
     }).then(function (dev) {
       // This browser has opened the board's update mode before, so it would have been found by
       // now: the board restarted but never came back on USB.
-      if (!dev && touched && dfuKnown(b)) throw Object.assign(new Error('The board restarted but didn’t come back in update mode.'), { code: 'gone' });
+      if (!dev && touched && dfuKnown(b)) {
+        if (generic) throw Object.assign(new Error('Flasher sent the restart, but no board came back in update mode.'), { code: 'noanswer' });
+        throw Object.assign(new Error('The board restarted but didn’t come back in update mode.'), { code: 'gone' });
+      }
       S.run.step = 'write';
       if (dev) return writeTo(dev, c);
       return askForDfu(c, true, touched);
@@ -609,8 +709,12 @@
       if (top - base !== b.flash.size && !c.fw.local) log('Note: ' + b.name + ' should have ' + I.fmtBytes(b.flash.size) + ' of flash; this device reports ' + I.fmtBytes(top - base) + '.', 'err');
       if (bytes.length > top - base) throw D.DfuError('The image (' + I.fmtBytes(bytes.length) + ') is larger than this device’s flash (' + I.fmtBytes(top - base) + ').', 'range');
       log('Erasing, writing, and verifying ' + bytes.length + ' bytes at ' + D.hex(base) + '…');
+      S.run.frac = { erase: 0, write: 0, verify: 0 };
       return dfu.flash(base, bytes, function (p) {
-        var w = W[p.phase]; S.run.pct = w[0] + w[1] * (p.total ? p.done / p.total : 0);
+        var w = W[p.phase], f = p.total ? p.done / p.total : 0; S.run.pct = w[0] + w[1] * f;
+        S.run.frac[p.phase] = f;
+        if (p.phase !== 'erase') S.run.frac.erase = 1;
+        if (p.phase === 'verify') S.run.frac.write = 1;
         S.run.phase = w[2] + ' · ' + (p.phase === 'erase' ? p.done + ' of ' + p.total + ' pages' : I.fmtBytes(p.done) + ' of ' + I.fmtBytes(p.total));
         var now = Date.now(); if (now - lastDraw > 80 || p.done === p.total) { lastDraw = now; drawProgress(); }
       });
@@ -627,14 +731,16 @@
       // request again (left ticked, the DFU list would be empty).
       S.skipTouch = false;
       upd();
+      resumeConsole();
     }).catch(function (e) { dfu.close(); throw e; });
   }
 
-  // Update just the bar and its text while writing, without rebuilding the page.
+  // Redraw just the route and its block map while writing, without rebuilding the page.
   function drawProgress() {
-    var bar = $('.fl-bar i'), ph = $('.fl-phase');
-    if (!bar || !ph) return upd();
-    bar.style.width = Math.round(S.run.pct * 100) + '%'; ph.textContent = S.run.phase;
+    var box = $('#fl-route-box'), c = current();
+    if (!box || !c) return upd();
+    box.innerHTML = c.board.kind === 'bridge' ? bridgeRoute(c, S.run) : directRoute(c, S.run);
+    renderTabs();
   }
 
   function stopWith(e, c) {
@@ -643,7 +749,13 @@
     run.busy = false; run.waitPick = false;
     var win = /Windows/.test(navigator.userAgent), name = e && e.name, msg = (e && e.message) || String(e);
     run.errorTitle = 'The flash stopped'; run.errorHelp = '';
-    if (e && e.code === 'none') {
+    if (e && (e.code === 'noanswer' || (e.code === 'none' && b.id === I.GENERIC.id && !S.skipTouch))) {
+      // A file flashed as any STM32: the restart was tried, and no board came back in update mode.
+      run.errorTitle = 'The board didn’t answer the restart';
+      run.error = msg + ' Its firmware may not listen for a 1200-baud restart, or it isn’t running. Put it in update mode by hand, then click “It’s in update mode”.';
+      run.errorHelp = '<ol class="fl-buttons">' + I.GENERIC.manualDfu.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
+        '<div class="fl-row"><button class="btn btn-primary" data-act="flash-byhand">It’s in update mode</button></div>';
+    } else if (e && e.code === 'none') {
       run.errorTitle = 'No board in update mode';
       run.error = msg + (S.skipTouch && b.run
         ? ' “The board isn’t running firmware” is ticked, so Flasher didn’t ask the board to restart. If it is running firmware, untick that box and flash again.'
@@ -667,6 +779,7 @@
     }
     log(run.errorTitle + ': ' + msg, 'err');
     upd();
+    resumeConsole();
   }
 
   // ── Bridge boards: updated through another board's USB passthrough (assets/sboot.js) ──
@@ -717,7 +830,7 @@
 
   function bridgeHtml(c, run) {
     var b = c.board, busy = run && run.busy, host = FL.serial.portNames(b.runs, 'the host board'), via = b.bridge.name || 'the passthrough';
-    var h = '<div class="fl-flash">';
+    var h = '<div id="fl-route-box">' + bridgeRoute(c, run) + '</div><div class="fl-flash">';
     h += '<p class="fl-intro">This board has no USB port of its own. Plug in the board it’s connected to (Chrome lists it as <b>' + esc(host) + '</b>) and click <b>Update board</b>. ' +
       'Flasher reaches this board’s bootloader through it, compares every block, and writes only the ones that differ. <b>Compare only</b> changes nothing.</p>';
     h += '<ol class="fl-steps">';
@@ -727,7 +840,6 @@
       '<div class="fl-step-sub"><i>First time:</i> Chrome shows a second list. Pick <b>' + esc(via) + '</b> and click <b>Connect</b>.</div></div></li>';
     h += '<li class="fl-step ' + bridgeState(run, 'write') + '"><span class="fl-num">3</span><div><div class="fl-step-title">' + (run && run.compareOnly ? 'Compare' : 'Compare and write') + '</div>' +
       '<div class="fl-step-sub">Every block’s checksum is compared with the board’s; the ones that differ are erased, written, and read back.</div>' +
-      (run && (run.step === 'write' || run.ok) ? '<div class="busy-bar fl-bar"><i style="width:' + Math.round((run.ok ? 1 : run.pct || 0) * 100) + '%"></i></div><div class="fl-step-sub fl-phase">' + esc(run.ok ? (run.compareOnly ? 'Compared' : 'Written and checked') : run.phase || '') + '</div>' : '') +
       '</div></li>';
     h += '<li class="fl-step ' + bridgeState(run, 'start') + '"><span class="fl-num">4</span><div><div class="fl-step-title">Run it</div>' +
       '<div class="fl-step-sub">This board starts its firmware, and ' + esc(host) + ' goes back to its own. Nothing to do.</div></div></li>';
@@ -755,8 +867,8 @@
     if (!c || c.board.kind !== 'bridge' || (S.run && S.run.busy)) return;
     var b = c.board, host = FL.serial.portNames(b.runs, 'the host board');
     S.run = { key: runKey(), busy: true, step: 'restart', log: [], pct: 0, phase: '', t0: Date.now(), compareOnly: !!compareOnly };
-    var closing = closeConsole();
-    S.con = null; upd();
+    var closing = pauseConsoleFor(b);
+    upd();
     closing.catch(function () {}).then(function () { return findBridge(c); }).then(function (port) {
       if (port) { log('The passthrough is already open.'); return port; }
       return pickSerial(b).then(function (hostPort) {
@@ -796,11 +908,17 @@
     var b = c.board, run = S.run, lastDraw = 0, failure = null;
     run.busy = true; run.waitPick = false; run.step = 'connect'; run.phase = 'Connecting…'; upd();
     bridgeSeen(b);
-    var link = new FL.sboot.Link(port);
+    var link = new FL.sboot.Link(port), units = c.fw.units || [];
+    run.cells = units.map(function () { return 'unk'; });
+    function unitAt(addr) { for (var i = 0; i < units.length; i++) if (addr >= units[i].addr && addr < units[i].addr + units[i].size) return i; return -1; }
     function progress(p) {
       if (p.phase === 'connect') return;
       if (run.step !== 'write') { run.step = 'write'; upd(); }
       var f = p.total ? p.done / p.total : 0;
+      // The block map: each block as it's compared, then written, then read back.
+      if (p.phase === 'compare' && p.index >= 0) run.cells[p.index] = p.differs ? 'diff' : 'same';
+      if (p.phase === 'write' && p.addr != null) { var wi = unitAt(p.addr); if (wi >= 0 && run.cells[wi] !== 'done') run.cells[wi] = 'now'; }
+      if (p.phase === 'checked') { var ci = unitAt(p.addr); if (ci >= 0) run.cells[ci] = 'done'; drawProgress(); return; }
       if (p.phase === 'compare') { run.pct = run.compareOnly ? f : 0.1 * f; run.phase = 'Comparing · ' + p.done + ' of ' + p.total + ' blocks'; }
       if (p.phase === 'download') { run.pct = 0.1 + 0.05 * f; run.phase = 'Downloading · file ' + (p.done + 1) + ' of ' + p.total; }
       if (p.phase === 'write') {
@@ -842,6 +960,7 @@
       }
       log(run.doneTitle + '.', 'ok');
       upd();
+      resumeConsole();
     }).catch(function (e) { stopBridge(e, c); });
   }
 
@@ -860,6 +979,7 @@
     else run.error = msg + (run.begun ? ' The board waits in its bootloader until an update finishes, so click Update board again.' : ' Nothing on the board was changed.');
     log(run.errorTitle + ': ' + msg, 'err');
     upd();
+    resumeConsole();
   }
 
   // ── Console: a terminal on the board's serial port (assets/term.js draws it) ──
@@ -876,61 +996,86 @@
   function termAdd(t) { term.write(t); queueDraw(); }
   function focusTerm() { var inp = $('#term-in'); if (inp) { inp.focus({ preventScroll: true }); queueDraw(); } }
 
-  function openConsole() {
-    var c = current(); if (!c || !c.board.run || (S.con && (S.con.open || S.con.connecting))) return;
-    var b = c.board, key = runKey();
-    S.tab = 'console'; S.con = { open: false, connecting: true, error: '' }; render();
-    var done = function () { if (runKey() !== key) return; S.con.connecting = false; S.con.open = true; S.con.error = ''; render(); focusTerm(); };
+  // opts.board: list only that board's ports (after a flash). opts.resume: reopen the port a flash paused,
+  // by its USB id, without asking (the board comes back as a new port).
+  function openConsole(opts) {
+    opts = opts || {};
+    if (S.con && (S.con.open || S.con.connecting)) return;
+    var b = opts.board || boards()[S.conFilter] || null, ids = b && b.runs && b.runs.length ? b.runs : null;
+    if (opts.baud) S.conBaud = opts.baud;
+    S.con = { open: false, connecting: true, error: '', name: opts.resume ? opts.resume.name : '' }; render();
+    var done = function () { S.con.connecting = false; S.con.open = true; S.con.error = ''; S.con.paused = false; render(); if (S.tab === 'console') focusTerm(); };
     var closed = function (why) {
-      if (S.con) { S.con.open = false; S.con.connecting = false; S.con.error = why || ''; }
-      if (why !== null) termAdd('\r\n[disconnected]\r\n');
-      con = null; if (runKey() === key) render();
+      var pausing = S.con && S.con.pausing;
+      if (S.con && !pausing) { S.con.open = false; S.con.connecting = false; S.con.error = why || ''; }
+      if (why !== null && !pausing) termAdd('\r\n[disconnected]\r\n');
+      con = null; render();
     };
     if (DEMO) {
       var sh = FL.fakeusb.shell({
-        name: 'tstat', banner: 'Acme Thermostat console (' + c.fw.name + '). Type help; Tab completes.', onData: termAdd,
+        name: 'tstat', banner: 'Acme Thermostat console' + (opts.resume ? ', after the flash' : '') + '. Type help; Tab completes.', onData: termAdd,
         commands: {
           status: function () { return 'OK heat off  cool off  T=21.4 °C  RH=38 %  24VAC ok'; },
           relay: function (a) { return /^(heat|cool)$/.test(a[0] || '') && /^(on|off)$/.test(a[1] || '') ? 'OK ' + a[0] + ' relay ' + a[1] : 'ERR usage: relay heat|cool on|off'; },
-          info: function () { return 'OK ' + c.fw.name + ', made up for the demo'; }
+          info: function () { var c = current(); return 'OK ' + (c ? c.fw.name : 'Thermostat Firmware') + ', made up for the demo'; }
         }
       });
-      con = { send: function (t) { sh.input(t); return Promise.resolve(); }, close: function () { sh.stop(); closed(''); return Promise.resolve(); } };
-      setTimeout(function () { done(); sh.start(); }, 250);
+      S.con.name = 'Acme Thermostat (demo)';
+      con = { demo: true, send: function (t) { sh.input(t); return Promise.resolve(); }, close: function () { sh.stop(); closed(''); return Promise.resolve(); } };
+      setTimeout(function () { done(); sh.start(); }, opts.resume ? 700 : 250);
       return;
     }
-    // A port the browser already allows is used at once. Just after a flash the board is still coming
-    // back, so wait a few seconds for it first. Otherwise ask (the browser's list needs this click).
-    var waitUntil = S.run && S.run.ok && Date.now() - S.run.doneAt < 8000 ? Date.now() + 5000 : 0;
+    if (!navigator.serial) { S.con = { error: 'This browser has no Web Serial: use Chrome or Edge.' }; render(); return; }
+    var want = opts.resume ? [opts.resume.info] : ids, waitUntil = opts.resume ? Date.now() + 8000 : opts.board ? Date.now() + 5000 : 0;
     function known() {
       return navigator.serial.getPorts().then(function (ports) {
-        return ports.filter(function (x) { return FL.serial.matches(x.getInfo(), b.runs); })[0] || null;
+        if (!want) return null;
+        var m = ports.filter(function (x) { var i = x.getInfo(); return want.some(function (w) { return w && i.usbVendorId === (w.usbVendorId != null ? w.usbVendorId : w.vid) && i.usbProductId === (w.usbProductId != null ? w.usbProductId : w.pid); }); });
+        return m.length === 1 || opts.resume ? m[0] || null : null;
       });
     }
     function find() {
       return known().then(function (p) {
         if (p) return p;
         if (Date.now() < waitUntil) return FL.serial.sleep(300).then(find);
-        return navigator.serial.requestPort({ filters: FL.serial.filters(b.runs) });
+        if (opts.resume) throw Object.assign(new Error('The board didn’t come back on its serial port after the flash. Choose it again.'), { name: 'Gone' });
+        return navigator.serial.requestPort(ids ? { filters: FL.serial.filters(ids) } : {});
       });
     }
     find().then(function (port) {
-      // Name the firmware that answered, when the board can run more than one.
-      var info = port.getInfo ? port.getInfo() : {}, which = b.runs.filter(function (r) { return FL.serial.matches(info, r); })[0];
-      if (S.con && which && which.name) S.con.name = which.name;
+      var info = port.getInfo ? port.getInfo() : {}, which = (ids || []).filter(function (r) { return FL.serial.matches(info, r); })[0];
+      if (S.con) S.con.name = which && which.name ? which.name : opts.resume && opts.resume.name ? opts.resume.name :
+        info.usbVendorId != null ? 'USB serial ' + hex4(info.usbVendorId) + ':' + hex4(info.usbProductId) : 'Serial port';
       con = new FL.serial.Console(termAdd, function () { closed(''); });
-      return con.open(port).then(done);
+      return con.open(port, S.conBaud).then(function () { if (opts.resume) termAdd('\r\n[reopened after the flash]\r\n'); done(); });
     }).catch(function (e) {
       con = null;
-      if (S.con) {
-        S.con.connecting = false; S.con.open = false;
-        S.con.error = e.name === 'NotFoundError' ? 'No port chosen' : e.name === 'SecurityError' ? 'Click Connect to choose the port'
-          : 'Couldn’t open the port: another program has it (the Arduino IDE’s Serial Monitor?)';
-      }
-      if (runKey() === key) render();
+      S.con = { open: false, connecting: false, error: e.name === 'NotFoundError' ? 'No port chosen' : e.name === 'SecurityError' ? 'Click Choose a port to pick it' : e.name === 'Gone' ? e.message
+        : 'Couldn’t open the port: another program has it (the Arduino IDE’s Serial Monitor?)' };
+      render();
     });
   }
-  function closeConsole() { var k = con; con = null; return k ? k.close() : Promise.resolve(); }
+  function closeConsole() { var k = con; con = null; if (S.con) S.con.paused = false; return k ? k.close() : Promise.resolve(); }
+  // A flash needs the board's serial port: a console open on it lets go for the flash and reopens after.
+  // A console on another device (a USB-UART cable, say) stays open.
+  function pauseConsoleFor(b) {
+    if (!con || !S.con || !S.con.open) return Promise.resolve(false);
+    var info = !con.demo && con.port && con.port.getInfo ? con.port.getInfo() : {};
+    var same = con.demo || b.id === I.GENERIC.id || FL.serial.matches(info, b.runs || []);
+    if (!same) return Promise.resolve(false);
+    var keep = { info: info, baud: S.conBaud, name: S.con.name };
+    S.con.pausing = true;
+    return closeConsole().then(function () {
+      S.con = { paused: true, resume: keep, name: keep.name };
+      termAdd('\r\n[paused: flashing from the Serial bootloader tab]\r\n'); render();
+      return true;
+    });
+  }
+  function resumeConsole() {
+    if (!(S.con && S.con.paused && S.con.resume)) return;
+    var r = S.con.resume; S.con = null;
+    openConsole({ resume: r, baud: r.baud });
+  }
 
   // ── People & access (FTEs; assets/access.js does the GitHub side) ──
   var SM = window.Signoff.model, A = FL.access;
@@ -1236,13 +1381,56 @@
   }
 
   // ── Events ──
+  // Picking firmware never closes the console (it's its own tab now). On the probe tab the pick stays
+  // there and becomes the probe's image; from the console it opens the Serial bootloader tab.
   function select(view, key) {
     if (S.run && S.run.busy) return toast('Wait for the flash to finish.');
-    closeConsole();
-    S.view = view; S.fwId = key || ''; S.run = null; S.con = null; S.tab = 'flash'; term = new FL.term.Screen();
+    resumeConsole();   // a flash left waiting at a picker had paused it
+    S.view = view; S.fwId = key || ''; S.run = null;
+    if (S.tab === 'console' || view === 'people' || view === 'home') S.tab = 'serial';
     document.body.querySelector('.app').classList.remove('nav-open');
     prepareBytes(); render(); $('#main').scrollTop = 0;
+    if (S.tab === 'probe') probeTakes();
   }
+
+  // ── The Debug probe tab: assets/probe/, loaded the first time the tab opens ──
+  var PROBE_FILES = ['files', 'stlink', 'jlink', 'target', 'stm32', 'svd', 'fakeprobe', 'app'];
+  var probeLoading = null, probeWas = false;
+  function loadProbe() {
+    if (FL.probeApp) return Promise.resolve();
+    if (probeLoading) return probeLoading;
+    var v = FL.VERSION ? '?v=' + FL.VERSION : '';
+    probeLoading = PROBE_FILES.reduce(function (p, f) {
+      return p.then(function () {
+        return new Promise(function (ok, fail) {
+          var s = document.createElement('script'); s.src = 'assets/probe/' + f + '.js' + v;
+          s.onload = ok; s.onerror = function () { fail(new Error('Couldn’t load the probe (' + f + '.js).')); };
+          document.body.appendChild(s);
+        });
+      });
+    }, Promise.resolve());
+    return probeLoading;
+  }
+  function showProbe() {
+    if (FL.probeApp) return FL.probeApp.show();
+    var box = $('#probe-view');
+    if (!box.innerHTML) box.innerHTML = '<div class="page"><p class="fl-muted">Loading the probe…</p></div>';
+    loadProbe().then(function () {
+      FL.probeApp.mount(box, { demo: DEMO ? (DEMO_PROBE === 'h5' ? 'h5' : 'g0') : null, image: currentImage, changed: renderTabs, toast: toast });
+      probeTakes();
+      if (S.tab === 'probe') FL.probeApp.show();
+    }, function (e) { box.innerHTML = '<div class="page"><div class="hint fl-bad"><b>The probe didn’t load</b>' + esc(e.message) + '</div></div>'; });
+  }
+  // The firmware picked in the sidebar, for the probe to program: { name, bytes, base, from } or { why }.
+  function currentImage() {
+    var c = current();
+    if (!c) return null;
+    if (c.board.kind === 'bridge') return { why: c.fw.name + ' is for a board updated through another board’s passthrough: it’s in blocks, not one image. Program it from the Serial bootloader tab.' };
+    if (!S.bytesReady || !bytesFor || bytesFor.key !== runKey()) return { why: S.bytesError || 'Fetching ' + c.fw.name + '…', waiting: !S.bytesError };
+    return { name: c.fw.local ? c.fw.name : c.fw.name + '.bin', title: c.fw.name, bytes: bytesFor.bytes, base: (c.board.flash || I.GENERIC.flash).base,
+      from: c.fw.local ? 'this computer' : 'GitHub', board: c.board.id === I.GENERIC.id ? '' : c.board.name, mcu: c.board.mcu || '' };
+  }
+  function probeTakes() { if (FL.probeApp && FL.probeApp.offer) FL.probeApp.offer(); }
 
   function sideCollapsed(on) {
     var app = $('#app');
@@ -1254,6 +1442,7 @@
 
   document.addEventListener('click', function (ev) {
     if (ev.target === $('#app') && $('#app').classList.contains('nav-open')) { $('#app').classList.remove('nav-open'); ev.stopPropagation(); return; }
+    if (ev.target.closest('#probe-view')) return;   // the probe handles its own (assets/probe/app.js)
     var el = ev.target.closest('[data-act]'); if (!el) return;
     var act = el.dataset.act;
     if (act === 'sheet-bg' && ev.target !== el) return;
@@ -1268,11 +1457,21 @@
       case 'bridge-compare': startBridge(true); break;
       case 'pick-bridge': pickBridge(); break;
       case 'pick-dfu': { var c = current(); if (c && S.run) { S.run.busy = true; S.run.waitPick = false; upd(); askForDfu(c, false); } break; }
+      case 'flash-byhand': S.skipTouch = true; S.run = null; startFlash(); break;
       case 'console': openConsole(); break;
-      case 'console-close': closeConsole(); break;
+      case 'console-board': { var cb = current(); S.tab = 'console'; openConsole(cb ? { board: cb.board } : {}); break; }
+      case 'console-close': closeConsole().then(function () { if (S.con) S.con = { error: '' }; render(); }); break;
       case 'term-clear': term.clear(); queueDraw(); focusTerm(); break;
-      case 'tab':
-        S.tab = el.dataset.tab === 'console' ? 'console' : 'flash'; render();
+      case 'term-save': {
+        var text = term.text ? term.text() : ($('#term-out') || {}).textContent || '';
+        var url = URL.createObjectURL(new Blob([text], { type: 'text/plain' })), a = document.createElement('a');
+        a.href = url; a.download = 'console-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt'; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+        break;
+      }
+      case 'top-tab':
+        S.tab = el.dataset.tab; document.body.querySelector('.app').classList.remove('nav-open');
+        render(); $('#main').scrollTop = 0;
         if (S.tab === 'console' && S.con && S.con.open) focusTerm();
         break;
       case 'account': accountSheet(); break;
@@ -1325,6 +1524,8 @@
     var k = ev.target.dataset && ev.target.dataset.change;
     if (k === 'skip') { S.skipTouch = ev.target.checked; render(); }
     if (k === 'local-board') { S.local.boardId = ev.target.value; S.run = null; prepareBytes(); render(); }
+    if (k === 'con-baud') { S.conBaud = +ev.target.value; render(); }
+    if (k === 'con-filter') { S.conFilter = ev.target.value; render(); }
   });
 
   document.addEventListener('submit', function (ev) {
@@ -1341,7 +1542,8 @@
   });
 
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && $('#sheet-root').innerHTML) { closeSheet(); return; }
+    // A probe confirmation (data-x buttons) answers Escape itself: closing it here would leave its operation waiting.
+    if (ev.key === 'Escape' && $('#sheet-root').innerHTML && !$('#sheet-root [data-x]')) { closeSheet(); return; }
     if (ev.target && ev.target.id === 'term-in') {
       // The console: keys go to the board as a terminal sends them.
       var sel = String(window.getSelection ? window.getSelection() : '');
@@ -1398,7 +1600,7 @@
   });
 
   // Never leave mid-flash: the board would be left half-written (recoverable, but slow).
-  window.addEventListener('beforeunload', function (ev) { if (S.run && S.run.busy) { ev.preventDefault(); ev.returnValue = ''; } });
+  window.addEventListener('beforeunload', function (ev) { if ((S.run && S.run.busy) || probeStatus().busy) { ev.preventDefault(); ev.returnValue = ''; } });
   // Another tab signing in or out (Signoff EE, say) changes what this page can read.
   var seenTag = whoTag();
   window.addEventListener('storage', function (ev) {
@@ -1417,11 +1619,12 @@
   $('#main').addEventListener('scroll', function () { $('#toolbar').classList.toggle('scrolled', $('#main').scrollTop > 60); }, { passive: true });
   if (DEMO) {
     var banner = $('#demo-banner');
-    banner.innerHTML = 'Demo: the made-up Smart Thermostat for Acme Climate. Flashing goes to a board simulated in this page; nothing touches USB. <a href="./">Leave the demo</a>';
+    banner.innerHTML = 'Demo: the made-up Smart Thermostat for Acme Climate. Flashing goes to a board simulated in this page, and the Debug probe tab to a simulated ST-LINK with ' +
+      (DEMO_PROBE === 'h5' ? 'an STM32H563 (<a href="?demo&tab=probe">try the G0B1</a>)' : 'an STM32G0B1 (<a href="?demo=h5&tab=probe">try the H563</a>)') + '; nothing touches USB. <a href="./">Leave the demo</a>';
     banner.hidden = false; document.body.classList.add('has-banner');
     document.querySelectorAll('[data-demo-href]').forEach(function (a) { a.href = a.getAttribute('href') + '?demo'; });
   }
-  FL.app = { state: S, load: load, render: render, demoBoard: demoBoard };
+  FL.app = { state: S, load: load, render: render, demoBoard: demoBoard, currentImage: currentImage, renderTabs: renderTabs };
   load();
   // Accepted from the suite's invitations card (signoff/assets/invites.js): read the list again.
   window.addEventListener('signoff:invites-accepted', function () { if (!DEMO) load(); });

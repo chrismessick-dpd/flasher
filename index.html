@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <!-- Scripts only from this site; data only from GitHub's API (the private data repo). USB and serial
-     access go through the browser's own pickers, never without a click. -->
+     access go through the browser's own pickers, never without a click. The debug probe's scripts load
+     the first time its tab opens (assets/probe/). -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://api.github.com https://signoff-auth.misty-dawn-b371.workers.dev https://signoff-auth-dev.misty-dawn-b371.workers.dev; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
@@ -15,6 +16,7 @@
 <meta name="apple-mobile-web-app-title" content="Signoff">
 <link rel="stylesheet" href="assets/suite.css">
 <link rel="stylesheet" href="assets/styles.css">
+<link rel="stylesheet" href="assets/probe/probe.css">
 </head>
 <body>
 <div id="demo-banner" class="demo-banner" hidden></div>
@@ -68,10 +70,6 @@
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.5 16.5c.6-2.8 2.6-4.3 5-4.3s4.4 1.5 5 4.3"/><circle cx="14" cy="7.8" r="2.2"/><path d="M13.6 12.3c2 .1 3.4 1.4 3.9 3.7"/></svg>
       People &amp; access
     </button>
-    <a class="side-link" href="probe.html" title="Program, read, and debug a chip through an ST-LINK or J-Link">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h4l2-4 2 8 2-4h4"/><circle cx="3" cy="10" r="1"/><circle cx="17" cy="10" r="1"/></svg>
-      Debug probe
-    </a>
     <button type="button" class="side-link" data-act="driver" title="Set up Windows so the browser can reach a board in update mode">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4"/><circle cx="10" cy="14.4" r=".5" fill="currentColor"/></svg>
       Windows driver help
@@ -92,22 +90,26 @@
       <button class="icon-btn menu-toggle" data-act="nav" title="Show sidebar ( [ )" aria-label="Show sidebar">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h14M3 10h14M3 14h14"/></svg>
       </button>
-      <div class="toolbar-title" id="toolbar-title"></div>
+      <!-- Serial bootloader, Debug probe, and Console (Chris, 2026-11-17; drawn by renderTabs in app.js). -->
+      <nav class="fl-toptabs" id="toptabs" role="tablist" aria-label="Tools"></nav>
       <div class="toolbar-center"></div>
       <div class="toolbar-actions">
+        <span class="fl-conn" id="conn" aria-live="polite"></span>
         <span class="fl-version" id="version"></span>
-        <button class="btn" data-act="open-file" title="Flash a .bin file from this computer">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg>
-          Open a .bin file…
-        </button>
       </div>
     </header>
-    <div id="view"></div>
+    <!-- One pane per tab, kept while another shows: the console stays connected, the probe keeps its page. -->
+    <div class="fl-pane" id="view" data-pane="serial"></div>
+    <div class="fl-pane" id="probe-view" data-pane="probe" hidden></div>
+    <div class="fl-pane" id="console-view" data-pane="console" hidden></div>
   </main>
 </div>
 <div id="sheet-root"></div>
 <div class="toasts" id="toasts"></div>
 <input type="file" id="file-input" accept=".bin,application/octet-stream" hidden>
+<!-- The probe's own file pickers (assets/probe/app.js). -->
+<input type="file" id="pb-file" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot" hidden>
+<input type="file" id="pb-svd" accept=".svd,.xml" hidden>
 <!-- Tickets: signoff/assets/tickets.js (FTEs; the ⋯ menu and the Tickets link above People & access). -->
 <script src="../signoff/assets/tickets.js"></script>
 <!-- Invitations: signoff/assets/invites.js (one card for every GitHub invitation, private repos included). -->
@@ -125,6 +127,7 @@
 <script src="assets/fakeusb.js"></script>
 <script src="assets/fakebridge.js"></script>
 <script src="assets/catalog.js"></script>
+<script src="assets/route.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

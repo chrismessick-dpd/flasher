@@ -1,8 +1,5 @@
-/* The probe page, on top of suite.css and Flasher's styles.css. Severities never by hue alone. */
+/* The Debug probe tab, on top of suite.css and Flasher's styles.css (its strip and sub-tabs are there). Severities never by hue alone. */
 
-.pb-nav .side-link.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-.pb-nav .side-link[disabled] { opacity: 0.45; pointer-events: none; }
-.pb-pill { cursor: default; }
 .sync-dot.pb-ok { background: var(--pass); }
 .sync-dot.pb-run { background: var(--accent); }
 

@@ -173,10 +173,10 @@
   /* A board for a local .bin when no catalog board fits: any STM32 in its ROM DFU bootloader.
      Its flash size is taken from the device's own layout once it's connected. */
   var GENERIC = cleanBoard('stm32-dfu', {
-    name: 'Any STM32 in DFU mode', mcu: 'STM32', flash: { base: 0x08000000, size: 0x200000 }, ram: { base: 0x20000000, size: 0x100000 },
+    name: 'Any STM32', mcu: 'STM32', flash: { base: 0x08000000, size: 0x200000 }, ram: { base: 0x20000000, size: 0x100000 },
     dfu: { vid: 0x0483, pid: 0xDF11, name: 'DFU in FS Mode' },
     manualDfu: ['Hold the board’s BOOT0 button (or tie BOOT0 high).', 'Press and release reset.', 'Release BOOT0. The board now waits in its ROM bootloader.'],
-    notes: 'No checks beyond “is this firmware”: the flash size comes from the board once it’s connected.'
+    notes: 'No checks beyond “is this firmware”: the flash size comes from the board once it’s connected. Flasher tries a 1200-baud restart on the serial port picked; without an answer, the board goes into update mode by hand.'
   }, []);
 
   FL.image = { check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };

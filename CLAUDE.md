@@ -81,6 +81,21 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   and every USB call times out after 5 s, but the J-Link is labeled beta and shouldn't be used for long transfers
   until that's understood. Not tried on hardware: G0 programming and G0 option bytes (the ST-LINK was on the H563).
 
+- **One page, three tabs (2026-11-17, Chris; not committed).** Designed in `lab/layout.html` (Chris chose
+  direction B: tabs across the top, the firmware list kept in the sidebar) and `lab/passthrough.html` (the
+  route, concept C). `index.html` has **Serial bootloader**, **Debug probe**, and **Console** tabs (`S.tab`,
+  `?tab=`), one pane each (`#view`, `#probe-view`, `#console-view`), so the console stays connected across them.
+  Chris's choices: the probe is a tab (its scripts load on first use, `loadProbe`; `assets/probe/app.js` is
+  mounted with `FL.probeApp.mount(root, host)` and keeps its events inside `#probe-view`), and it programs the
+  sidebar's pick from GitHub (`currentImage`); a file flashed as **Any STM32** tries the 1200-baud restart on
+  any port first, then shows BOOT0 steps (`noanswer`); the console opens any port at a chosen rate, and a flash
+  of its board pauses it and reopens it after (`pauseConsoleFor`, `resumeConsole`); no draggable console.
+  Every update draws its route with a live block map (`assets/route.js`, `directRoute`, `bridgeRoute`; sboot's
+  compare progress now names each block, `index`/`differs`, and `checked` follows each read-back). `probe.html`
+  redirects to the tab. Tests: 62 browser, 36 probe, 24 Python. Tried in `?demo` (direct, bridge, file with
+  and without an answer, console pause, probe programming the picked firmware), light, dark, and 375 px. Not
+  tried on hardware.
+
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:

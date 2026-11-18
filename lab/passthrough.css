@@ -1,0 +1,127 @@
+/* Flasher lab · passthrough. On top of suite.css and Flasher's styles.css; new pieces are pt-. */
+
+.pt-body { margin: 0; min-height: 100vh; background: var(--bg-sunk); color: var(--text); }
+.pt-head { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-end; justify-content: space-between; padding: 20px 24px 6px; }
+.pt-intro { max-width: 600px; }
+.pt-title { font: 700 24px/1.15 var(--display); letter-spacing: -0.02em; margin: 0 0 6px; }
+.pt-note { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+.pt-note a { color: var(--accent); }
+.pt-ctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.pt-ctl .btn { min-width: 76px; justify-content: center; }
+.pt-caption { margin: 10px 24px 14px; padding: 10px 14px; border-radius: 10px; background: var(--bg-elev); font-size: 14px; line-height: 1.5; color: var(--text); box-shadow: var(--shadow); min-height: 21px; }
+.pt-caption b { color: var(--accent-ink); }
+:root[data-theme="dark"] .pt-caption b { color: #5fd0dc; }
+
+.pt-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding: 0 24px 40px; }
+.pt-card { padding: 16px 18px 18px; min-width: 0; }
+.pt-card-c { grid-column: 1 / -1; }
+.pt-card-h { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; margin-bottom: 14px; }
+.pt-card-h b { font: 600 15px var(--display); }
+.pt-card-h span { color: var(--text-3); font-size: 12.5px; }
+
+/* Shared: the link that's carrying traffic */
+@keyframes pt-flow { to { stroke-dashoffset: -24; } }
+@keyframes pt-flow-back { to { stroke-dashoffset: 24; } }
+.pt-wire { fill: none; stroke: var(--hair-2); stroke-width: 3; stroke-linecap: round; }
+.pt-wire.on { stroke: var(--accent); }
+.pt-dash { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 10; opacity: 0; }
+.pt-dash.on { opacity: 1; stroke: #fff; animation: pt-flow 0.7s linear infinite; }
+.pt-dash.on.back { animation-name: pt-flow-back; }
+:root[data-theme="dark"] .pt-dash.on { stroke: #0b0b0d; }
+@media (prefers-reduced-motion: reduce) { .pt-dash.on { animation: none; } }
+
+/* A · Signal path */
+.pt-a { display: grid; grid-template-columns: auto 1fr auto 1fr auto; align-items: center; gap: 0; }
+.pt-stop { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 120px; text-align: center; }
+.pt-node {
+  width: 56px; height: 56px; border-radius: 14px; display: grid; place-items: center; background: var(--bg-sunk); color: var(--text-2);
+  box-shadow: inset 0 0 0 1.5px var(--hair-2); transition: background 0.3s, color 0.3s, box-shadow 0.3s;
+}
+.pt-node svg { width: 28px; height: 28px; }
+.pt-node.on { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 2px var(--accent); }
+:root[data-theme="dark"] .pt-node.on { color: #5fd0dc; }
+.pt-name { font-size: 13px; font-weight: 600; line-height: 1.25; }
+.pt-mode { font-size: 11.5px; color: var(--text-3); padding: 1px 7px; border-radius: 999px; background: var(--bg-sunk); white-space: nowrap; }
+.pt-mode.on { background: var(--accent); color: #fff; }
+.pt-mode.new { background: var(--pass-soft); color: var(--pass); }
+.pt-mode.new::before { content: '✓ '; }
+.pt-link { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 40px; margin-top: -34px; }
+.pt-link svg { width: 100%; height: 12px; overflow: visible; }
+.pt-link-label { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.pt-link-label.on { color: var(--text); font-weight: 600; }
+
+/* B · The bench */
+.pt-b svg { width: 100%; height: auto; display: block; }
+.pt-b .pcb { fill: #0e5a3e; }
+:root[data-theme="dark"] .pt-b .pcb { fill: #0f4a35; }
+.pt-b .pcb-edge { fill: none; stroke: rgba(255, 255, 255, 0.12); }
+.pt-b .chip { fill: #1d1d1f; }
+.pt-b .pad { fill: #c9a24a; }
+.pt-b .conn { fill: #e8e8ea; stroke: #9a9aa0; }
+.pt-b .lcd { fill: #0a2530; stroke: #3a6a78; }
+.pt-b .lcd-text { fill: #6fd3e0; font: 600 11px var(--mono); }
+.pt-b .lap { fill: var(--bg-sunk); stroke: var(--hair-2); stroke-width: 1.5; }
+.pt-b .lap-screen { fill: var(--bg-elev); stroke: var(--hair-2); }
+.pt-b .lap-text { fill: var(--text-2); font: 600 10px var(--display); }
+.pt-b .label { fill: var(--text); font: 600 12.5px var(--display); }
+.pt-b .sub { fill: var(--text-3); font: 500 11px var(--display); }
+.pt-b .sub.on { fill: var(--accent); font-weight: 700; }
+:root[data-theme="dark"] .pt-b .sub.on { fill: #5fd0dc; }
+.pt-b .led { fill: #3a3a3c; transition: fill 0.3s; }
+.pt-b .led.on { fill: #30d158; }
+.pt-b .led.busy { fill: #ffd60a; animation: pt-blink 0.5s steps(1) infinite; }
+@keyframes pt-blink { 50% { fill: #3a3a3c; } }
+.pt-b .tag { fill: var(--accent); }
+.pt-b .tag-text { fill: #fff; font: 700 10.5px var(--display); }
+
+/* C · Compact line and block map */
+.pt-c-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+/* The chain is drawn at 150% (Chris, 2026-11-17): 13 → 19.5 px type, 15 → 22 px icons, 26 → 39 px links. */
+.pt-chain { display: inline-flex; align-items: flex-start; gap: 9px; font-size: 19.5px; padding: 10px 18px 11px; border-radius: 18px; background: var(--bg-sunk); }
+.pt-chain svg { width: 22px; height: 22px; flex: none; }
+.pt-chain .hop { display: inline-flex; flex-direction: column; gap: 2px; color: var(--text-2); }
+.pt-chain .hop-name { display: inline-flex; align-items: center; gap: 8px; }
+.pt-chain .hop.on .hop-name { color: var(--text); font-weight: 600; }
+.pt-chain .hop-status { font-size: 13.5px; color: var(--text-3); padding-left: 30px; transition: color 0.3s; }
+.pt-chain .hop-status.live { color: var(--accent-ink); font-weight: 600; }
+:root[data-theme="dark"] .pt-chain .hop-status.live { color: #5fd0dc; }
+.pt-chain .via { width: 39px; height: 3px; border-radius: 2px; margin-top: 12px; background: var(--hair-2); position: relative; overflow: hidden; flex: none; }
+.pt-chain .via.on { background: var(--accent-soft); }
+.pt-chain .via.on::after { content: ''; position: absolute; top: 0; bottom: 0; width: 12px; border-radius: 2px; background: var(--accent); animation: pt-run 0.8s linear infinite; }
+@keyframes pt-run { from { left: -12px; } to { left: 39px; } }
+@media (prefers-reduced-motion: reduce) { .pt-chain .via.on::after { animation: none; left: 13px; } }
+.pt-chain-note { font-size: 13px; color: var(--text-2); }
+.pt-blocks { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 3px; margin-top: 14px; max-width: 720px; }
+.pt-blk { aspect-ratio: 1; border-radius: 3px; box-shadow: inset 0 0 0 1px var(--hair-2); background: transparent; transition: background 0.2s, box-shadow 0.2s; }
+.pt-blk.unk { background: var(--bg-sunk); box-shadow: none; }
+.pt-blk.diff { background: repeating-linear-gradient(-45deg, var(--accent) 0 1.5px, transparent 1.5px 4px), var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.pt-blk.now { box-shadow: inset 0 0 0 2px var(--accent); animation: pt-blink-bg 0.4s steps(1) infinite; }
+@keyframes pt-blink-bg { 50% { background: var(--accent-soft); } }
+.pt-blk.done { background: var(--accent); box-shadow: none; position: relative; }
+.pt-blk.done::after { content: '✓'; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-size: 9px; line-height: 1; }
+.pt-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--text-3); }
+.pt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pt-legend-label { font-weight: 600; color: var(--text-2); }
+.pt-legend .pt-blk { width: 12px; height: 12px; display: inline-block; aspect-ratio: auto; }
+
+@media (max-width: 900px) {
+  .pt-grid { grid-template-columns: 1fr; padding: 0 16px 32px; }
+  .pt-head { padding: 16px 16px 6px; }
+  .pt-caption { margin: 10px 16px 12px; }
+  .pt-stop { width: 84px; }
+  .pt-node { width: 44px; height: 44px; }
+  .pt-node svg { width: 22px; height: 22px; }
+  .pt-blocks { gap: 2px; }
+}
+@media (max-width: 600px) {
+  .pt-a { display: flex; flex-direction: column; align-items: center; }
+  .pt-stop { width: auto; }
+  .pt-link { margin: 4px 0; flex-direction: row; gap: 10px; min-width: 0; }
+  .pt-link svg { width: 30px; transform: rotate(90deg); }
+  .pt-chain { flex-direction: column; gap: 4px; border-radius: 14px; }
+  .pt-chain .via { width: 3px; height: 16px; margin: 0 0 0 9px; }
+  .pt-chain .via.on::after { left: 0; right: 0; width: auto; height: 6px; animation-name: pt-run-down; }
+  @keyframes pt-run-down { from { top: -6px; } to { top: 16px; } }
+  .pt-ctl, .pt-intro { max-width: 100%; min-width: 0; }
+  #pt-steps { flex-wrap: wrap; }
+}

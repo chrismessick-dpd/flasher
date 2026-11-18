@@ -43,15 +43,18 @@
   }
 
   /* A console on an open port: open(port) then send(text); onData(text) gets what arrives.
-     Opens at 115200 (any rate but the touch rate: 1200 would send the board back to its bootloader). */
+     Opens at 115200 unless told otherwise; never at 1200, the touch rate, which would send an Arduino-style
+     board back to its bootloader. */
   function Console(onData, onClose) {
     this.onData = onData; this.onClose = onClose || function () {};
     this.port = null; this.reader = null; this.closing = false;
   }
-  Console.prototype.open = function (port) {
+  Console.prototype.open = function (port, baud) {
     var self = this;
     this.port = port; this.closing = false;
-    return port.open({ baudRate: 115200 }).then(function () {
+    if (!baud || baud === 1200) baud = 115200;
+    this.baud = baud;
+    return port.open({ baudRate: baud }).then(function () {
       return Promise.resolve(port.setSignals ? port.setSignals({ dataTerminalReady: true }) : null).catch(function () {});
     }).then(function () { self.pump(); });
   };

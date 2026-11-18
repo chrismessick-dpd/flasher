@@ -6,11 +6,18 @@ plug the board in by USB, and click **Flash board**. Part of the Dovetail Signof
 - **Real use:** the firmware list and images come from Flasher's private repos, read with the suite's
   GitHub sign-in. FTEs see every project; clients and contractors see only the projects shared with
   them (*Access*). Every image is checked against its SHA-256 before it's flashed.
-- **Flash and Console** are two tabs of one panel. The console is a terminal on the board's USB serial
-  port (*The console*).
+- **One page, three tabs** across the top bar (Chris, 2026-11-17): **Serial bootloader** (flash over USB
+  through the chip's ROM bootloader), **Debug probe** (an ST-LINK or J-Link, *Debug probe*), and **Console**
+  (a terminal on any serial port, *The console*). The firmware list stays in the sidebar for all three. Each
+  tab keeps its own pane, so the console stays connected while you flash or use the probe.
+- **Signed out**, a file from this computer, the probe, and the console all work; only the projects'
+  firmware needs GitHub.
+- **The route** above every update shows where it goes, live: this computer → the board, or this computer →
+  the host board → the bridge board, each stop saying what it's doing, with a block map of the image under it
+  (`assets/route.js`; designed in `lab/passthrough.html`).
 - **`?demo`:** the suite's made-up Smart Thermostat for Acme Climate. It flashes a board simulated
   in the page, so it runs anywhere and touches no USB.
-- **Open a .bin file…** flashes a file from this computer.
+- **A file from this computer**, first in the sidebar, flashes a `.bin` as any STM32 (*How a flash works*).
 
 It's a static page with no build step and no outside scripts. Serve the tools folder and open
 `flasher/index.html`, or use its GitHub Pages address. WebUSB and Web Serial need https or
@@ -24,7 +31,10 @@ so a board never needs a first flash by other means, and a failed flash can alwa
 1. **Restart into the bootloader.** If the board is running firmware that supports it, Flasher
    opens its USB serial port at 1200 baud and drops DTR (Web Serial), as the Arduino IDE does. The
    firmware then reboots into the ROM bootloader. A blank board, or one whose firmware doesn't
-   listen, is put there by hand; the board's own steps come from its entry in the manifest.
+   listen, is put there by hand; the board's own steps come from its entry in the manifest. A file
+   flashed as **Any STM32** tries the same restart on whichever serial port is picked; if no board comes
+   back in update mode, Flasher says the board didn't answer and shows the BOOT0 steps, with
+   **It's in update mode** to carry on.
 2. **Erase, write, and verify** over WebUSB with ST's DfuSe extensions (`assets/dfuse.js`):
    - set the address and erase each page the image covers;
    - write it in transfer-size chunks (each one a set-address, then block 2);
@@ -119,8 +129,10 @@ People list. It isn't tied to Signoff PL's sharing.
 
 ## The console
 
-The Console tab is a small terminal (`assets/term.js`) on the board's USB serial port, opened at
-115200 baud (never 1200, which restarts the board into its bootloader). Every key goes to the board as a
+The Console tab is a small terminal (`assets/term.js`) on any serial port: a board running its firmware, a
+USB-UART cable, or a probe's virtual COM port. **Choose a port…** opens Chrome's list of every port, or,
+signed in, only one board's (the menu beside it); the rate is a menu, 115200 by default (never 1200, which
+restarts an Arduino-style board into its bootloader). Every key goes to the board as a
 terminal sends it, so a firmware console that edits its own line works as it does in PuTTY: Up and Down recall history, Tab completes, Ctrl-L redraws, and `clear` clears.
 - **Keys.** Ctrl-C copies when text is selected, else goes to the board. Paste sends the text, with
   each line end as Enter.
@@ -130,8 +142,10 @@ terminal sends it, so a firmware console that edits its own line works as it doe
   cursor moves. Colors and other sequences are dropped.
 - **Typing.** Keys go through a hidden text field, as in xterm.js, so phone keyboards, dictation, and
   input methods work.
-- **Clear** clears only the window.
-- **Flashing** closes the console first, since the restart into DFU mode needs the port.
+- **Clear** clears only the window; **Save log…** saves it as text.
+- **Flashing** the board the console is on (from the Serial bootloader tab) pauses the console, since the
+  restart needs the port, and reopens it on the board's new port when the flash ends, whether it worked or
+  not. A console on another device stays open. Picking other firmware never closes it.
 
 ## The data repos
 
@@ -263,14 +277,18 @@ project is shared, its `review-flasher-*` repo must be among the token's reposit
 
 ## Debug probe
 
-`probe.html` (**Debug probe** in the sidebar) is a programmer for an engineer's bench: an ST-LINK or J-Link
-in the browser, as a calmer STM32CubeProgrammer. It needs no sign-in and never talks to GitHub. Pages:
+The **Debug probe** tab is a programmer for an engineer's bench: an ST-LINK or J-Link in the browser, as a
+calmer STM32CubeProgrammer. Its scripts (`assets/probe/`) load the first time the tab opens; the probe's
+settings are a strip under the top bar, and its pages are sub-tabs. It needs no sign-in. Signed in, it
+programs the firmware picked in the sidebar (read from GitHub, as the Serial bootloader tab does), and warns
+when that firmware was built for another chip; bridge-board firmware, which is in blocks, isn't offered.
+`probe.html` now just opens this tab. Pages:
 
 - **Device:** the probe (firmware, target voltage), the chip (core, device ID, flash size and layout, unique
   ID, protection), Halt, Run, Reset and halt, Reset and run, Hardware reset (NRST), and the core registers.
 - **Memory:** read any range, page through it as hex, save it as `.bin` or `.hex`; write one word to RAM or a
   register.
-- **Erase & program:** open `.bin` (with a load address), `.hex`, `.elf`, or `.srec`; erase only the pages or
+- **Erase & program:** the firmware picked in the sidebar, or open `.bin` (with a load address), `.hex`, `.elf`, or `.srec`; erase only the pages or
   sectors the image covers (the default, so a bootloader elsewhere stays) or the whole flash; write, verify by
   reading back, and reset into it. Erase a range, or the whole flash, on its own.
 - **Registers:** every peripheral register from ST's SVD (bundled for the G0B1 and H563; **Open an SVD file**
@@ -295,15 +313,17 @@ ST's driver as installed. The J-Link speaks SWD bit by bit through SEGGER's raw 
 overrun detection so a WAIT never repeats or skips a write. It is experimental. Close STM32CubeProgrammer,
 CubeIDE, OpenOCD, or J-Link tools first: only one program can hold a probe.
 
-`probe.html?demo` (a G0B1) and `?demo=h5` (an H563) run against a simulated ST-LINK (`assets/probe/fakeprobe.js`).
+`index.html?demo&tab=probe` (a G0B1) and `?demo=h5&tab=probe` (an H563) run against a simulated ST-LINK (`assets/probe/fakeprobe.js`).
 Findings behind the design: `docs/stlink-webusb.md`.
 
 ## Files
 
 | File | What |
 | --- | --- |
-| `index.html` | The page; CSP allows scripts from this site and `connect-src` to GitHub's API only |
-| `probe.html` | The debug probe page (above); CSP allows nothing outside this site |
+| `index.html` | The page, with its three tabs; CSP allows scripts from this site and `connect-src` to GitHub's API (and the sign-in Worker) only |
+| `probe.html` | Opens the Debug probe tab (old links) |
+| `assets/route.js` | The route diagram and block map above each update |
+| `lab/` | Design labs, not loaded by the tool: `layout.html` (this layout) and `passthrough.html` (the route) |
 | `assets/probe/stlink.js` | ST-LINK commands over WebUSB (V2, V2-1, V3), per probe-rs |
 | `assets/probe/jlink.js` | J-Link commands over WebUSB and bit-level SWD |
 | `assets/probe/target.js` | Cortex-M: connect under reset or hot plug, halt, run, reset, core registers |
@@ -312,7 +332,7 @@ Findings behind the design: `docs/stlink-webusb.md`.
 | `assets/probe/svd.js` | Register definitions: the bundled SVDs and any opened `.svd` file |
 | `assets/probe/svd/` | ST's SVDs for the G0B1 and H563, made compact by `tools/svd_to_json.py` (Apache-2.0) |
 | `assets/probe/fakeprobe.js` | A simulated ST-LINK/V3 with a G0B1 or H563 behind it (tests and `?demo`) |
-| `assets/probe/app.js`, `probe.css` | The probe page's UI |
+| `assets/probe/app.js`, `probe.css` | The Debug probe tab's UI, mounted by `assets/app.js` |
 | `assets/dfuse.js` | DfuSe over WebUSB: layout and descriptor parsing, erase, write, read, and leave |
 | `assets/image.js` | Image checks, SHA-256, and manifest validation; the generic STM32 board for local files |
 | `assets/serial.js` | The 1200-baud touch, and the serial port under the console |

@@ -1,0 +1,201 @@
+/* Flasher lab · layout. Builds on suite.css and Flasher's styles.css; only the new pieces live here (lx-). */
+
+.lx-body { margin: 0; min-height: 100vh; background: var(--bg-sunk); color: var(--text); }
+
+/* The lab's own header and switches */
+.lx-lab-head { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-end; justify-content: space-between; padding: 20px 24px 14px; }
+.lx-lab-intro { max-width: 560px; }
+.lx-lab-title { font: 700 24px/1.15 var(--display); letter-spacing: -0.02em; margin: 0 0 6px; }
+.lx-lab-note { margin: 0; color: var(--text-2); font-size: 13.5px; line-height: 1.5; }
+.lx-lab-ctl { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.lx-ctl { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); font-weight: 600; }
+.lx-qs { font-size: 13px; color: var(--text-2); position: relative; }
+.lx-qs summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.lx-qs[open] ol {
+  position: absolute; right: 0; top: 26px; z-index: 50; width: min(480px, 88vw); margin: 0; padding: 14px 16px 14px 34px;
+  background: var(--bg-elev); border-radius: var(--radius); box-shadow: var(--shadow-lg); line-height: 1.5;
+}
+.lx-qs li + li { margin-top: 8px; }
+.lx-qs code { font-size: 12px; }
+
+/* The mock app, framed */
+.lx-frame {
+  margin: 0 24px 24px; height: calc(100vh - 150px); min-height: 560px; border-radius: 14px; overflow: hidden;
+  background: var(--bg); box-shadow: var(--shadow-lg), 0 0 0 1px var(--hair-2); display: flex; flex-direction: column;
+}
+.lx-app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* Top bar: brand, tabs, then what's connected and who you are */
+.lx-top {
+  display: flex; align-items: center; gap: 14px; padding: 0 14px; height: 56px; flex: none;
+  border-bottom: 1px solid var(--hair); background: var(--bg-elev);
+}
+.lx-brand { display: flex; align-items: center; gap: 9px; flex: none; color: inherit; text-decoration: none; }
+.lx-brand .brand-mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: #004952; }
+.lx-brand .brand-mark svg { width: 20px; height: 20px; }
+.lx-brand-name { font: 700 16px var(--display); letter-spacing: -0.01em; }
+.lx-tabs { display: flex; gap: 2px; align-self: stretch; margin-left: 10px; }
+.lx-tabs button {
+  position: relative; display: inline-flex; align-items: center; gap: 8px; border: none; background: none; cursor: pointer;
+  color: var(--text-2); font: 600 14px var(--display); padding: 0 14px; white-space: nowrap;
+}
+.lx-tabs button svg { width: 17px; height: 17px; flex: none; }
+.lx-tabs button:hover { color: var(--text); background: var(--hair); }
+.lx-tabs button.on { color: var(--accent-ink); }
+.lx-tabs button.on::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2.5px; border-radius: 2px 2px 0 0; background: var(--accent); }
+:root[data-theme="dark"] .lx-tabs button.on { color: #5fd0dc; }
+.lx-tabs .lx-live { width: 7px; height: 7px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 3px var(--pass-soft); }
+.lx-top-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.lx-conn {
+  display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); padding: 5px 11px;
+  border-radius: 999px; background: var(--bg-sunk); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+}
+.lx-conn .sync-dot { flex: none; }
+.lx-who { display: inline-flex; flex-direction: column; line-height: 1.15; text-align: left; border: none; background: none; cursor: pointer; padding: 4px 8px; border-radius: 8px; color: inherit; font: inherit; }
+.lx-who:hover { background: var(--hair); }
+.lx-who b { font-size: 12.5px; font-weight: 600; }
+.lx-who small { font-size: 11.5px; color: var(--text-3); }
+.lx-suite { position: relative; }
+.lx-suite-pop {
+  position: absolute; right: 0; top: 40px; z-index: 40; width: 230px; padding: 6px; border-radius: 12px;
+  background: var(--bg-elev); box-shadow: var(--shadow-lg), 0 0 0 1px var(--hair);
+}
+.lx-suite-pop a { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; color: inherit; text-decoration: none; font-size: 13px; }
+.lx-suite-pop a:hover { background: var(--hair); }
+.lx-suite-pop small { display: block; color: var(--text-3); font-size: 11.5px; }
+.lx-suite-pop .tool-mark, .lx-fold .tool-mark { width: 26px; height: 26px; border-radius: 7px; background: #004952; display: grid; place-items: center; flex: none; color: #fff; }
+.lx-suite-pop .tool-mark svg, .lx-fold .tool-mark svg { width: 14px; height: 14px; }
+.lx-suite-pop .tool-mark-text, .lx-fold .tool-mark-text { font: 700 10px/1 var(--display); letter-spacing: 0.02em; }
+.lx-fold { display: flex; gap: 6px; padding: 4px 8px; }
+.lx-group-h { flex-wrap: wrap; row-gap: 0; }
+
+/* Body: optional rail, then the tab's page */
+.lx-body-row { flex: 1; min-height: 0; display: flex; }
+.lx-rail {
+  width: 272px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--hair); background: var(--bg-elev);
+  overflow: hidden;
+}
+.lx-rail-scroll { flex: 1; overflow: auto; padding: 12px 10px; }
+.lx-rail .side-foot { border-top: 1px solid var(--hair); padding: 10px; display: flex; align-items: center; gap: 6px; }
+.lx-rail .sync-pill { flex: 1; min-width: 0; }
+.lx-main { flex: 1; min-width: 0; overflow: auto; }
+.lx-page { max-width: 1080px; margin: 0 auto; padding: 26px 28px 80px; }
+.lx-h { font: 700 26px/1.15 var(--display); letter-spacing: -0.02em; margin: 0 0 4px; }
+.lx-lede { color: var(--text-2); margin: 0 0 20px; font-size: 14px; line-height: 1.5; }
+
+/* Serial: firmware on the left, board and flash on the right */
+.lx-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.lx-card { padding: 16px 18px; }
+.lx-card-h { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font: 600 15px var(--display); }
+.lx-card-h .fl-num { width: 22px; height: 22px; font-size: 12px; }
+.lx-card-h .seg { margin-left: auto; }
+.lx-group { margin-top: 12px; }
+.lx-group:first-child { margin-top: 0; }
+.lx-group-h { font-size: 11.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
+.lx-group-h .lx-board { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.lx-fw {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: none; border-radius: 10px;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.lx-fw:hover { background: var(--hair); }
+.lx-fw.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.lx-fw-body { flex: 1; min-width: 0; }
+.lx-fw-name { display: block; font-weight: 600; font-size: 14px; }
+.lx-fw-sub { display: block; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lx-ver { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; flex: none; }
+.lx-lock {
+  border-radius: 12px; padding: 16px; background: var(--bg-sunk); text-align: center; font-size: 13.5px; color: var(--text-2); line-height: 1.5;
+}
+.lx-lock svg { width: 22px; height: 22px; color: var(--text-3); display: block; margin: 0 auto 6px; }
+.lx-lock b { display: block; color: var(--text); font-size: 14px; margin-bottom: 2px; }
+.lx-lock .btn { margin-top: 10px; }
+.lx-drop {
+  border: 1.5px dashed var(--hair-2); border-radius: 12px; padding: 22px 16px; text-align: center; color: var(--text-2); font-size: 13.5px;
+  cursor: pointer; background: none; width: 100%; font: inherit;
+}
+.lx-drop:hover { border-color: var(--accent); color: var(--text); }
+.lx-drop svg { width: 24px; height: 24px; display: block; margin: 0 auto 6px; color: var(--text-3); }
+.lx-file { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); margin-top: 10px; font-size: 13.5px; }
+.lx-file .lx-fw-body { min-width: 0; flex: 1; }
+.lx-file > svg { width: 20px; height: 20px; flex: none; color: var(--accent); }
+.lx-or { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 12px; margin: 14px 0; }
+.lx-or::before, .lx-or::after { content: ''; flex: 1; height: 1px; background: var(--hair); }
+.lx-kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; margin: 0 0 12px; }
+.lx-kv dt { color: var(--text-3); }
+.lx-kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.lx-flash-btn { width: 100%; justify-content: center; padding: 11px; font-size: 15px; margin-top: 6px; }
+.lx-empty { color: var(--text-3); font-size: 13.5px; padding: 30px 10px; text-align: center; }
+.fl-step.stuck .fl-num { background: var(--warn-fill-hatch), var(--warn); color: transparent; position: relative; }
+.fl-step.stuck .fl-num::after { content: '▲'; position: absolute; inset: 0; display: grid; place-items: center; color: var(--on-warn, #000); font-size: 11px; }
+.lx-hand { margin: 6px 0 0; padding-left: 20px; }
+.lx-qs-link { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.lx-mini a { color: var(--accent); }
+.lx-mini { font-size: 12.5px; color: var(--text-3); margin: 8px 0 0; line-height: 1.45; }
+
+/* Probe: a strip of probe settings, then sub-tabs */
+.lx-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 28px; border-bottom: 1px solid var(--hair);
+  background: var(--bg-elev); position: sticky; top: 0; z-index: 5;
+}
+.lx-strip .input { width: auto; padding: 5px 8px; font-size: 13px; }
+.lx-strip .grow { flex: 1; }
+.lx-strip-chip { font-size: 13px; color: var(--text-2); display: inline-flex; align-items: center; gap: 7px; }
+.lx-subtabs { display: flex; gap: 2px; padding: 0 28px; border-bottom: 1px solid var(--hair); overflow-x: auto; scrollbar-width: none; }
+.lx-subtabs::-webkit-scrollbar { display: none; }
+.lx-subtabs button {
+  position: relative; border: none; background: none; cursor: pointer; color: var(--text-2); font: 600 13.5px var(--display);
+  padding: 11px 12px; white-space: nowrap;
+}
+.lx-subtabs button:hover { color: var(--text); }
+.lx-subtabs button.on { color: var(--text); }
+.lx-subtabs button.on::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+.lx-subtabs button[disabled] { color: var(--text-3); opacity: 0.55; cursor: default; }
+.lx-hex { font: 12px/1.6 var(--mono); background: var(--bg-sunk); border-radius: 10px; padding: 10px 12px; overflow-x: auto; white-space: pre; margin: 0; }
+.lx-hex .a { color: var(--text-3); }
+.lx-hex .z { color: var(--text-3); opacity: 0.6; }
+.lx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lx-table th { text-align: left; font-weight: 600; color: var(--text-3); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; padding: 6px 8px; border-bottom: 1px solid var(--hair); }
+.lx-table td { padding: 7px 8px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.lx-table tr.diff td { background: var(--warn-hatch), var(--warn-soft); }
+.lx-table .fl-mono { white-space: nowrap; }
+.lx-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.lx-row .input { width: auto; }
+
+/* Console: the terminal fills the page */
+.lx-con { display: flex; flex-direction: column; height: 100%; }
+.lx-con .lx-strip { position: static; }
+.lx-con-body { flex: 1; min-height: 0; padding: 14px 28px 20px; display: flex; flex-direction: column; }
+.lx-con .fl-term { flex: 1; height: auto; min-height: 200px; }
+.lx-send { display: flex; gap: 8px; margin-top: 10px; }
+.lx-send .input { flex: 1; font-family: var(--mono); font-size: 13px; }
+
+/* Settings sheet, mocked */
+.lx-scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 80; display: grid; place-items: center; padding: 16px; }
+.lx-sheet { width: min(460px, 100%); max-height: 90vh; overflow: auto; padding: 20px 22px; }
+.lx-sheet h2 { font: 700 20px var(--display); margin: 0 0 12px; }
+
+/* Narrow: tabs go to icons with short labels, the rail folds away, the grid stacks */
+@media (max-width: 1000px) {
+  .lx-grid { grid-template-columns: 1fr; }
+  .lx-rail { display: none; }
+  .lx-rail.open { display: flex; position: absolute; z-index: 30; top: 56px; bottom: 0; left: 0; box-shadow: var(--shadow-lg); }
+  .lx-body-row { position: relative; }
+}
+@media (min-width: 1001px) { .lx-rail-btn { display: none; } }
+@media (max-width: 900px) { .lx-tabs button { padding: 0 10px; } .lx-who small { display: none; } }
+@media (max-width: 760px) {
+  .lx-lab-head { padding: 14px 16px 10px; }
+  .lx-frame { margin: 0 0 0; border-radius: 0; height: calc(100vh - 40px); }
+  .lx-brand-name, .lx-conn, .lx-who small, .lx-top [data-act="theme"] { display: none; }
+  .lx-top-right { gap: 4px; }
+  .lx-top .btn-primary { padding: 6px 10px; }
+  .lx-tabs { margin-left: 0; flex: 1; justify-content: space-around; }
+  .lx-tabs button { flex-direction: column; justify-content: center; gap: 2px; font-size: 11px; padding: 0 6px; }
+  .lx-tabs .lx-long { display: none; }
+  .lx-top { gap: 6px; padding: 0 8px; }
+  .lx-page { padding: 18px 16px 60px; }
+  .lx-strip, .lx-subtabs { padding-left: 16px; padding-right: 16px; }
+  .lx-con-body { padding: 10px 16px 16px; }
+  .lx-h { font-size: 22px; }
+}
+@media (min-width: 761px) { .lx-short { display: none; } }

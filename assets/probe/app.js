@@ -1,12 +1,15 @@
-/* Flasher's probe page: an ST-LINK (or J-Link) in the browser, as a calmer STM32CubeProgrammer.
+/* Flasher's Debug probe tab: an ST-LINK (or J-Link) in the browser, as a calmer STM32CubeProgrammer.
    Pages: Device, Memory, Program, Registers, Option bytes, and Log. One operation at a time.
-   ?demo (a G0B1) and ?demo=h5 (an H563) run against the simulated probe in fakeprobe.js. */
+   The page (assets/app.js) loads these files the first time the tab opens and calls
+   FL.probeApp.mount(root, host): host.image() is the firmware picked in the sidebar (from GitHub or a
+   file), host.changed() redraws the page's tabs, and host.demo is 'g0' or 'h5' in ?demo (the simulated
+   probe in fakeprobe.js). Everything here stays inside root. */
 (function () {
   'use strict';
   var FL = window.FL, F = FL.files, X = FL.stm32, hex = X.hex;
-  var DEMO = (function () { var m = /[?&]demo(=(\w+))?/.exec(location.search); return m ? (m[2] || 'g0') : null; })();
-  var SETTINGS_KEY = 'signoff.v1.settings', PREFS_KEY = 'flasher.v1.probe';
-  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var DEMO = null, PREFS_KEY = 'flasher.v1.probe';
+  var root = null, host = { image: function () { return null; }, changed: function () {} };
+  var $ = function (s, r) { return (r || root || document).querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function parseNum(s) { s = String(s || '').trim().replace(/_/g, ''); if (!s) return NaN; return /^0x/i.test(s) ? parseInt(s, 16) : /^[0-9a-f]+$/i.test(s) && /[a-f]/i.test(s) ? parseInt(s, 16) : /^\d+\s*k$/i.test(s) ? parseInt(s, 10) * 1024 : parseInt(s, 10); }
 
@@ -26,22 +29,6 @@
     ob: { cur: null, edits: {} }
   };
 
-  // ── Theme (the suite's setting) ──
-  function readTheme() { try { return (JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {}).theme || 'auto'; } catch (e) { return 'auto'; } }
-  function isDark(t) { return t === 'dark' || (t === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches); }
-  function applyTheme(t) {
-    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); else document.documentElement.removeAttribute('data-theme');
-    var b = $('#theme-btn'); if (!b) return;
-    b.innerHTML = isDark(t) ? '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="3.6"/><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/></svg>'
-      : '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M16.5 12.2A7 7 0 0 1 7.8 3.5a7 7 0 1 0 8.7 8.7z"/></svg>';
-    b.title = isDark(t) ? 'Light mode' : 'Dark mode';
-  }
-  function toggleTheme() {
-    var t = isDark(readTheme()) ? 'light' : 'dark';
-    try { var s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {}; s.theme = t; localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (e) { /* blocked */ }
-    applyTheme(t);
-  }
-
   // ── Log and toasts ──
   function log(msg, err) {
     var d = new Date(), t = d.toTimeString().slice(0, 8);
@@ -52,7 +39,7 @@
   function line(l) { return '<div' + (l.err ? ' class="e"' : '') + '><span class="t">' + l.t + '</span> ' + esc(l.msg) + '</div>'; }
   function toast(text, bad) {
     var el = document.createElement('div'); el.className = 'toast' + (bad ? ' toast-bad' : ''); el.textContent = (bad ? '✕ ' : '') + text;
-    $('#toasts').appendChild(el); setTimeout(function () { el.remove(); }, bad ? 7000 : 3500);
+    document.getElementById('toasts').appendChild(el); setTimeout(function () { el.remove(); }, bad ? 7000 : 3500);
   }
 
   // One operation at a time. fn gets nothing; errors are logged and shown.
@@ -131,36 +118,37 @@
     ['options', 'Option bytes', '<path d="M4 6h8M15 6h1M4 14h1M8 14h8"/><circle cx="13.5" cy="6" r="1.8"/><circle cx="6.5" cy="14" r="1.8"/>'],
     ['log', 'Log', '<path d="M5 3h10v14H5z"/><path d="M8 7h4M8 10h4M8 13h2"/>']
   ];
-  function renderNav() {
-    $('#pb-nav').innerHTML = PAGES.map(function (p) {
-      return '<button type="button" class="side-link' + (S.view === p[0] ? ' on' : '') + '" data-act="view" data-view="' + p[0] + '"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + p[2] + '</svg>' + p[1] + '</button>';
-    }).join('');
-    var dot = $('#pb-dot'), c = S.chip;
-    dot.className = 'sync-dot' + (S.busy ? ' pb-run' : S.target ? ' pb-ok' : '');
-    $('#pb-title').textContent = S.busy ? S.busy + '…' : S.target ? c.name : S.probe ? S.probe.info.name : 'No probe';
-    $('#pb-sub').textContent = S.target ? (S.probe.info.name + (S.voltage != null ? ' · ' + S.voltage.toFixed(2) + ' V' : '')) : S.probe ? 'Not connected to a target' : 'Connect an ST-LINK or J-Link';
-  }
-  function renderBar() {
+  function stripHtml() {
     var on = !!S.target, b = S.busy;
     var speeds = (S.speeds && S.speeds.length ? S.speeds : [24000, 8000, 4000, 1800, 1000, 480, 100]);
-    if (speeds.indexOf(S.khz) < 0) speeds = speeds.concat([S.khz]).sort(function (a, c) { return c - a; });
-    $('#pb-actions').innerHTML = '<div class="pb-bar">' +
+    if (speeds.indexOf(S.khz) < 0) speeds = speeds.concat([S.khz]).sort(function (a, x) { return x - a; });
+    return '<div class="pb-strip">' +
       '<div class="seg" title="Which probe"><button type="button" data-act="kind" data-kind="stlink" class="' + (S.kind === 'stlink' ? 'on' : '') + '"' + (S.probe ? ' disabled' : '') + '>ST-LINK</button>' +
       '<button type="button" data-act="kind" data-kind="jlink" title="Experimental: connects and reads; long transfers have rebooted a J-Link V13 into its bootloader" class="' + (S.kind === 'jlink' ? 'on' : '') + '"' + (S.probe || DEMO ? ' disabled' : '') + '>J-Link (beta)</button></div>' +
       '<label class="pb-check" title="Hold NRST low while connecting, so the application never runs (needs NRST wired to the probe)"><input type="checkbox" data-change="under-reset"' + (S.underReset ? ' checked' : '') + (on ? ' disabled' : '') + '> Under reset</label>' +
       '<select class="input" data-change="khz" title="SWD clock"' + (on ? ' disabled' : '') + '>' + speeds.map(function (k) { return '<option value="' + k + '"' + (k === S.khz ? ' selected' : '') + '>' + (k >= 1000 ? k / 1000 + ' MHz' : k + ' kHz') + '</option>'; }).join('') + '</select>' +
+      '<span class="grow"></span>' +
       (on ? '<button class="btn" data-act="disconnect"' + (b ? ' disabled' : '') + '>Disconnect</button>' : '<button class="btn btn-primary" data-act="connect"' + (b ? ' disabled' : '') + '>Connect</button>') +
       '</div>';
   }
+  function subtabsHtml() {
+    return '<nav class="pb-subtabs" aria-label="Probe pages">' + PAGES.map(function (p) {
+      return '<button type="button" class="' + (S.view === p[0] ? 'on' : '') + '" data-act="view" data-view="' + p[0] + '">' + p[1] + '</button>';
+    }).join('') + '</nav>';
+  }
+  // For the page's top bar: whether a target is connected, and what to say about it.
+  function status() {
+    var c = S.chip;
+    return { on: !!S.target, busy: !!S.busy, text: S.busy ? S.busy + '…' : S.target ? c.name.split('/')[0] + (S.voltage != null ? ' · ' + S.voltage.toFixed(2) + ' V' : '') + ' · ' + S.probe.info.name : S.probe ? S.probe.info.name + ' · no target' : 'No probe' };
+  }
   function render() {
-    renderNav(); renderBar();
-    $('#toolbar-title').textContent = (PAGES.filter(function (p) { return p[0] === S.view; })[0] || [])[1] || '';
-    var v = $('#view'), focus = document.activeElement && document.activeElement.id;
-    var y = v.scrollTop;
-    v.innerHTML = '<div class="page">' + ({ device: viewDevice, memory: viewMemory, program: viewProgram, registers: viewRegisters, options: viewOptions, log: viewLog }[S.view])() + '</div>';
-    v.scrollTop = y;
+    if (!root) return;
+    var main = document.getElementById('main'), y = main ? main.scrollTop : 0, focus = document.activeElement && document.activeElement.id;
+    root.innerHTML = stripHtml() + subtabsHtml() + '<div class="page">' + ({ device: viewDevice, memory: viewMemory, program: viewProgram, registers: viewRegisters, options: viewOptions, log: viewLog }[S.view])() + '</div>';
+    if (main && !root.hidden) main.scrollTop = y;
     if (focus && $('#' + focus)) $('#' + focus).focus();
     var box = $('#pb-log-lines'); if (box) box.scrollTop = box.scrollHeight;
+    host.changed();
   }
   function head(eyebrow, title, sub) {
     return '<div class="page-head"><div class="page-head-text"><div class="eyebrow">' + esc(eyebrow) + '</div><h1 class="page-title">' + esc(title) + '</h1>' + (sub ? '<div class="page-sub">' + sub + '</div>' : '') + '</div></div>';
@@ -247,9 +235,16 @@
 
   function viewProgram() {
     var g = S.prog, img = g.img, c = S.chip;
-    var h = head('Erase & program', 'Program a file', 'Open a .bin, .hex, .elf, or .srec file, then erase, write, verify, and start it. By default only the pages or sectors the image covers are erased, so a bootloader elsewhere in flash is kept.');
-    h += '<div class="card fl-pad"><div class="fl-row" style="margin-top:0"><button class="btn btn-primary" data-act="open-file"' + dis() + '>Open a file…</button>' +
-      (img ? '<b>' + esc(img.name) + '</b><span class="fl-muted">' + esc(img.format) + ' · ' + F.fmtBytes(img.size) + '</span>' : '<span class="fl-muted">No file open.</span>') + '</div>';
+    var h = head('Erase & program', 'Program firmware', 'The firmware picked in the list on the left (from GitHub once signed in), or a .bin, .hex, .elf, or .srec file. Erase, write, verify, and start it. By default only the pages or sectors the image covers are erased, so a bootloader elsewhere in flash is kept.');
+    var im = host.image(), listed = g.listed, offerable = im && !im.why && !(listed && listed.key === listedKey(im));
+    h += '<div class="card fl-pad"><div class="fl-row" style="margin-top:0">' +
+      (offerable ? '<button class="btn btn-primary" data-act="use-listed"' + dis() + '>Use ' + esc(im.title) + '</button>' : '') +
+      '<button class="btn' + (offerable ? '' : ' btn-primary') + '" data-act="open-file"' + dis() + '>Open a file…</button>' +
+      (img ? '<b>' + esc(img.name) + '</b><span class="fl-muted">' + esc((listed ? 'from ' + listed.from + (listed.board ? ' · ' + listed.board : '') + ' · ' : img.format + ' · ') + F.fmtBytes(img.size)) + '</span>'
+        : '<span class="fl-muted">' + esc(g.listNote || 'Pick firmware in the list, or open a file.') + '</span>') + '</div>';
+    if (img && g.listNote) h += '<p class="fl-muted fl-help">' + esc(g.listNote) + '</p>';
+    var mis = img ? chipMismatch() : '';
+    if (mis) h += '<div class="hint fl-warn" style="margin-top:12px"><b>Another chip</b>' + esc(img.name) + ' is built for the ' + esc(mis) + '; the probe is on the ' + esc(c.name) + '.</div>';
     if (img) {
       if (img.needsBase) h += '<div class="pb-fields" style="margin-top:12px"><div class="field"><label for="p-base">Load address for the .bin</label><input class="input" id="p-base" value="' + hex(g.base) + '"></div></div>';
       h += '<table class="pb-seg" style="margin-top:12px"><thead><tr><th>Segment</th><th>From</th><th>To</th><th>Size</th></tr></thead><tbody>' +
@@ -400,11 +395,11 @@
 
   // ── Sheets ──
   function sheet(html) {
-    var root = $('#sheet-root');
-    root.innerHTML = '<div class="sheet-wrap"><div class="sheet" role="dialog" aria-modal="true">' + html + '</div></div>';
-    return root.querySelector('.sheet');
+    var sr = document.getElementById('sheet-root');
+    sr.innerHTML = '<div class="sheet-wrap"><div class="sheet" role="dialog" aria-modal="true">' + html + '</div></div>';
+    return sr.querySelector('.sheet');
   }
-  function closeSheet() { $('#sheet-root').innerHTML = ''; }
+  function closeSheet() { document.getElementById('sheet-root').innerHTML = ''; }
   function confirmSheet(title, body, word, okLabel) {
     return new Promise(function (resolve) {
       var w = sheet('<div class="sheet-head"><h2>' + esc(title) + '</h2></div><div class="sheet-body">' + body +
@@ -413,7 +408,7 @@
       var inp = w.querySelector('#c-word'), yes = w.querySelector('[data-x=yes]');
       if (inp) { inp.addEventListener('input', function () { yes.disabled = inp.value.trim().toUpperCase() !== word.toUpperCase(); }); inp.focus(); }
       w.addEventListener('click', function (e) { var b = e.target.closest('[data-x]'); if (!b || b.disabled) return; closeSheet(); resolve(b.dataset.x === 'yes'); });
-      $('#sheet-root .sheet-wrap').addEventListener('click', function (e) { if (e.target === e.currentTarget) { closeSheet(); resolve(false); } });
+      document.querySelector('#sheet-root .sheet-wrap').addEventListener('click', function (e) { if (e.target === e.currentTarget) { closeSheet(); resolve(false); } });
     });
   }
 
@@ -514,8 +509,6 @@
   }
 
   var actions = {
-    nav: function () { $('#app').classList.toggle('nav-collapsed'); },
-    theme: toggleTheme,
     view: function (b) { S.view = b.dataset.view; render(); },
     kind: function (b) { S.kind = b.dataset.kind; prefs.kind = S.kind; savePrefs(); render(); },
     connect: connect,
@@ -544,7 +537,8 @@
       if (S.chip && S.chip.flashSize && a >= S.chip.flashBase && a < S.chip.flashBase + S.chip.flashSize) { toast('That\'s flash: program it on Erase & program.', true); return; }
       return op('Write a word', async function () { await S.target.w32(a >>> 0, v >>> 0); var back = await S.target.r32(a >>> 0); log('Wrote ' + hex(v) + ' at ' + hex(a) + '; reads back ' + hex(back) + '.'); });
     },
-    'open-file': function () { $('#pb-file').value = ''; $('#pb-file').click(); },
+    'open-file': function () { var f = document.getElementById('pb-file'); f.value = ''; f.click(); },
+    'use-listed': function () { offer(true); },
     program: function () { return op('Program', async function () { try { await doProgram(false); } catch (e) { S.prog.run = Object.assign(S.prog.run || {}, { done: true, ok: false, msg: e.message }); throw e; } }); },
     'verify-only': function () { return op('Compare', async function () { try { await doProgram(true); } catch (e) { S.prog.run = Object.assign(S.prog.run || {}, { done: true, ok: false, msg: e.message }); throw e; } }); },
     'erase-range': function () {
@@ -577,7 +571,7 @@
         log('Mass erase done.');
       });
     },
-    'open-svd': function () { $('#pb-svd').value = ''; $('#pb-svd').click(); },
+    'open-svd': function () { var f = document.getElementById('pb-svd'); f.value = ''; f.click(); },
     'r-read': function (b) { var k = b.dataset.k; return op('Read ' + k, function () { needTarget(); return readReg(k); }); },
     'r-read-all': function (b) {
       var p = S.svd.dev.p.filter(function (x) { return x.n === b.dataset.p; })[0];
@@ -609,7 +603,10 @@
     'sheet-close': closeSheet
   };
 
+  // Only what happens inside the tab is the probe's; the rest of the page has its own handlers.
+  function mine(e) { return root && e.target.closest && e.target.closest('#' + root.id); }
   document.addEventListener('click', function (e) {
+    if (!mine(e)) return;
     var b = e.target.closest('[data-act]');
     if (!b || b.disabled) return;
     if (b.tagName === 'A') e.preventDefault();
@@ -617,7 +614,7 @@
     if (fn) fn(b);
   });
   document.addEventListener('toggle', function (e) {
-    var d = e.target; if (!d.dataset || !d.dataset.periph) return;
+    var d = e.target; if (!mine(e) || !d.dataset || !d.dataset.periph) return;
     var was = !!S.svd.open[d.dataset.periph];
     if (d.open === was) return;
     S.svd.open[d.dataset.periph] = d.open;
@@ -625,7 +622,7 @@
   }, true);
   document.addEventListener('change', function (e) {
     var el = e.target, k = el.dataset && el.dataset.change;
-    if (!k) return;
+    if (!k || !mine(e)) return;
     if (k === 'under-reset') { S.underReset = el.checked; prefs.underReset = el.checked; savePrefs(); }
     else if (k === 'khz') { S.khz = +el.value; prefs.khz = S.khz; savePrefs(); }
     else if (k === 'erase') S.prog.erase = el.value;
@@ -650,24 +647,24 @@
     render();
   });
   document.addEventListener('input', function (e) {
+    if (!mine(e)) return;
     if (e.target.id === 'r-filter') { S.svd.filter = e.target.value; clearTimeout(S.filterTimer); S.filterTimer = setTimeout(render, 200); }
     if (e.target.id === 'p-base') { var v = parseNum(e.target.value); if (!isNaN(v)) S.prog.base = v >>> 0; }
   });
   document.addEventListener('keydown', function (e) {
-    if (e.key === '[' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) actions.nav();
-    if (e.key === 'Escape' && $('#sheet-root').innerHTML) { var no = $('#sheet-root [data-x=no]'); if (no) no.click(); }
+    var no = e.key === 'Escape' && document.querySelector('#sheet-root [data-x=no]'); if (no) no.click();
   });
 
-  $('#pb-file').addEventListener('change', async function () {
+  document.getElementById('pb-file').addEventListener('change', async function () {
     var f = this.files[0]; if (!f) return;
     try {
       var img = F.parse(f.name, new Uint8Array(await f.arrayBuffer()), S.prog.base);
-      S.prog.img = img; S.prog.run = null;
+      S.prog.img = img; S.prog.run = null; S.prog.listed = null;
       log('Opened ' + f.name + ': ' + img.format + ', ' + img.segments.length + ' segment' + (img.segments.length > 1 ? 's' : '') + ', ' + F.fmtBytes(img.size) + '.');
       S.view = 'program'; render();
     } catch (e) { log(f.name + ': ' + e.message, true); toast(e.message, true); }
   });
-  $('#pb-svd').addEventListener('change', async function () {
+  document.getElementById('pb-svd').addEventListener('change', async function () {
     var f = this.files[0]; if (!f) return;
     try { S.svd.dev = FL.svd.parseXml(await f.text()); S.svd.name = f.name; S.svd.values = {}; S.svd.edits = {}; S.svd.errors = {}; log('Loaded ' + f.name + ' (' + S.svd.dev.p.length + ' peripherals).'); render(); }
     catch (e) { log(f.name + ': ' + e.message, true); toast(e.message, true); }
@@ -676,14 +673,43 @@
     if (S.probe && S.probe.dev === e.device) { log('The probe was unplugged.', true); dropProbe(); S.voltage = null; render(); }
   });
 
-  // ── Start ──
-  applyTheme(readTheme());
-  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { applyTheme(readTheme()); });
-  if (DEMO) {
-    var banner = $('#demo-banner'); banner.hidden = false;
-    banner.innerHTML = 'Demo: a simulated ST-LINK with ' + (DEMO === 'h5' ? 'an STM32H563' : 'an STM32G0B1') + ' behind it. Nothing touches USB. <a href="?demo=' + (DEMO === 'h5' ? 'g0' : 'h5') + '">Try the ' + (DEMO === 'h5' ? 'G0B1' : 'H563') + '</a>';
+  // ── The firmware picked in the sidebar ──
+  // The page's pick (from GitHub, or a file) becomes the image to program, unless a file was opened here
+  // after it. force: the "Use … from the list" button.
+  var pending = false;
+  function listedKey(im) { return im.title + '|' + im.bytes.length + '|' + im.base; }
+  function offer(force) {
+    var im = host.image();
+    S.prog.listNote = '';
+    if (!im) { pending = false; if (root) render(); return; }
+    if (im.why) { S.prog.listNote = im.why; pending = !!im.waiting; if (root) render(); return; }
+    pending = false;
+    var key = listedKey(im);
+    if (!force && S.prog.listed && S.prog.listed.key === key) return;
+    try {
+      var img = F.parse(im.name, im.bytes, im.base);
+      img.name = im.title;
+      S.prog.base = im.base >>> 0; S.prog.img = img; S.prog.run = null;
+      S.prog.listed = { key: key, from: im.from, board: im.board, mcu: im.mcu };
+      log('Took ' + im.title + ' from ' + (im.from === 'GitHub' ? 'GitHub' : 'this computer') + ': ' + F.fmtBytes(img.size) + ' at ' + hex(im.base) + '.');
+      S.view = 'program';
+    } catch (e) { log(im.title + ': ' + e.message, true); }
+    if (root) render();
   }
-  var ver = $('#version'); if (ver && FL.VERSION) ver.textContent = FL.VERSION;
-  render();
-  FL.probeApp = { S: S, actions: actions, render: render, connect: connect };
+  // The chip on the probe isn't the one the picked firmware was built for.
+  function chipMismatch() {
+    var l = S.prog.listed, c = S.chip;
+    if (!l || !l.mcu || !c) return '';
+    var a = l.mcu.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 9), b = c.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 9);
+    return a.length >= 7 && b.length >= 7 && a.slice(0, 7) !== b.slice(0, 7) ? l.mcu : '';
+  }
+
+  // ── Start: mounted by the page ──
+  function mount(el, h) {
+    root = el; host = Object.assign(host, h || {});
+    DEMO = host.demo || null;
+    render();
+  }
+  function show() { if (pending) offer(); else render(); }
+  FL.probeApp = { S: S, actions: actions, render: render, connect: connect, mount: mount, show: show, status: status, offer: offer };
 })();
