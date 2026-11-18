@@ -86,6 +86,24 @@
         manualDfu: ['Hold S2 (BOOT).', 'Press and release S1 (RESET).', 'Release S2. Both LEDs stay off: the board is waiting in its bootloader.'],
         notes: 'The Main PCBA (Signoff EE board pdemo7). Its USB-C port is the one by the terminal blocks.'
       },
+      // Built for the two chips the Debug probe tab simulates (?demo: G0B1, ?demo=h5: H563), so each has firmware
+      // that matches it to program.
+      'tstat-sensor': {
+        name: 'Remote Sensor', mcu: 'STM32G0B1 (made up for the demo)', project: 'thermostat',
+        flash: { base: '0x08000000', size: '0x80000' }, ram: { base: '0x20000000', size: '0x24000' },
+        run: { vid: '0x0483', pid: '0x5744', name: 'Acme Remote Sensor' }, dfu: { vid: '0x0483', pid: '0xDF11', name: 'DFU in FS Mode' },
+        touchBaud: 1200,
+        manualDfu: ['Hold the BOOT button.', 'Press and release RESET.', 'Release BOOT. The LED stays off: the sensor is waiting in its bootloader.'],
+        notes: 'The battery-powered remote sensor for another room. Its debug header (SWD) is under the battery cover.'
+      },
+      'tstat-gateway': {
+        name: 'Wi-Fi Gateway', mcu: 'STM32H563 (made up for the demo)', project: 'thermostat',
+        flash: { base: '0x08000000', size: '0x200000' }, ram: { base: '0x20000000', size: '0xA0000' },
+        run: { vid: '0x0483', pid: '0x5746', name: 'Acme Gateway' }, dfu: { vid: '0x0483', pid: '0xDF11', name: 'DFU in FS Mode' },
+        touchBaud: 1200,
+        manualDfu: ['Hold the BOOT button.', 'Press and release RESET.', 'Release BOOT. The status light turns off: the gateway is waiting in its bootloader.'],
+        notes: 'The plug-in gateway that joins the thermostat and its remote sensors to Wi-Fi. Its debug header (SWD) is beside the USB-C port.'
+      },
       'tstat-display': {
         kind: 'bridge', name: 'Display & Sensor Board', mcu: 'STM32F767 (single-bank)', project: 'thermostat',
         touch: [{ vid: '0x0483', pid: '0x5740', name: 'Acme Thermostat' }], touchBaud: 2400, exitBaud: 1200,
@@ -111,6 +129,16 @@
         description: 'Relay test: clicks the heat relay, then the cool relay, 2 s each.\n\nType stop in the console to hold both off.',
         source: { repo: 'acme-climate/thermostat-fw', sha: '9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f7081920', path: 'examples/RelayTest', dirty: true },
         built: '2026-11-02T10:12:00Z', published: '2026-11-02T10:15:00Z' },
+      { id: 'sensor-1-4-0', board: 'tstat-sensor', name: 'Remote Sensor 1.4.0', seed: 31, size: 41236,
+        summary: 'Reads temperature and humidity every minute and sends them to the gateway; sleeps between readings.',
+        description: 'The remote sensor’s firmware for release 1.4.0: a reading every minute, sent over the radio to the gateway, and a deep sleep between readings for a two-year battery.\n\nOn the Debug probe tab (?demo), this is the firmware built for the simulated STM32G0B1.',
+        source: { repo: 'acme-climate/thermostat-fw', sha: '4f1c2e9a7b3d5c60e8f9a1b2c3d4e5f60718293a', path: 'sensor', dirty: false },
+        built: '2026-11-06T15:58:00Z', published: '2026-11-06T16:20:00Z' },
+      { id: 'gateway-1-4-0', board: 'tstat-gateway', name: 'Gateway Firmware 1.4.0', seed: 37, size: 88412,
+        summary: 'Joins Wi-Fi, relays the remote sensors to the thermostat, and fetches over-the-air updates.',
+        description: 'The gateway’s firmware for release 1.4.0: Wi-Fi setup from the thermostat’s screen, the radio link to every remote sensor, and the over-the-air update service.\n\nOn the Debug probe tab (?demo=h5), this is the firmware built for the simulated STM32H563.',
+        source: { repo: 'acme-climate/thermostat-fw', sha: '4f1c2e9a7b3d5c60e8f9a1b2c3d4e5f60718293a', path: 'gateway', dirty: false },
+        built: '2026-11-06T15:58:00Z', published: '2026-11-06T16:20:00Z' },
       { id: 'display-1-4-0', board: 'tstat-display', kind: 'units', name: 'Display Firmware 1.4.0', seed: 23,
         summary: 'The touch display and its pictures and fonts, written through the Main PCBA.',
         description: 'The display board’s firmware for release 1.4.0: the home screen, the schedule editor, and the setup screens, with their pictures and fonts in the board’s external flash.\n\nOnly the blocks that differ from what’s on the board are written, so an update that changes code but not pictures takes seconds. Try Compare only first: it changes nothing.',
@@ -197,10 +225,16 @@
         c.boards[bid].project = pid; c.projects[pid] = { name: names[pid], repo: 'the demo' };
       });
       c.head = 'demo'; c.updated = m.updated; c.source = 'the demo';
+      // The display's firmware isn't in the demo's list (Chris, 2026-11-17): it's flashed through the demo's
+      // passthrough system instead (app.js seeds one). Its manifest board stays, so a dropped .hex can still pick it,
+      // and its published blocks stay here for the tests (bridgeFirmware).
+      c.bridgeFirmware = c.firmware.filter(function (f) { return f.kind === 'units'; });
+      c.firmware = c.firmware.filter(function (f) { return f.kind !== 'units'; });
       c.fetch = function (f) { return Promise.resolve((files[f.path] || images[f.id]).slice()); };
       // The board the demo's display update writes to, holding the previous release.
       c.demoDisplay = function (id) {
-        var b = c.boards['tstat-display'], units = demoUnits(DEMO_MANIFEST.firmware.filter(function (f) { return f.id === id; })[0].seed, true);
+        var f = DEMO_MANIFEST.firmware.filter(function (x) { return x.id === id; })[0] || DEMO_MANIFEST.firmware.filter(function (x) { return x.board === 'tstat-display'; })[0];
+        var b = c.boards['tstat-display'], units = demoUnits(f.seed, true);
         var sim = FL.fakebridge.display({ units: units, appBase: b.expect.appBase, qspiBase: b.expect.qspiBase, device: b.expect.device, latency: 1, eraseMs: 12, bootMs: 250 });
         units.forEach(function (u) { sim.load(u.addr, u.bytes); });
         return sim;
@@ -208,7 +242,8 @@
       // A passthrough system's view of the same board (no manifest entry): every erase unit of an STM32F767
       // single-bank and 16 MB of external flash, as its INFO describes them, holding the previous release.
       c.demoSystemSim = function (id, baud) {
-        var info = Object.assign({ singleBank: true }, DEMO_INFO), units = demoUnits(DEMO_MANIFEST.firmware.filter(function (f) { return f.id === id; })[0].seed, true);
+        var f = DEMO_MANIFEST.firmware.filter(function (x) { return x.id === id; })[0] || DEMO_MANIFEST.firmware.filter(function (x) { return x.board === 'tstat-display'; })[0];
+        var info = Object.assign({ singleBank: true }, DEMO_INFO), units = demoUnits(f.seed, true);
         var sim = FL.fakebridge.display(Object.assign({ units: I.layoutUnits(I.layoutFromInfo(info)), latency: 1, eraseMs: 12, bootMs: 250, baud: baud || 1000000 }, DEMO_INFO));
         units.forEach(function (u) { sim.load(u.addr, u.bytes); });
         return sim;

@@ -123,6 +123,7 @@
     return S.syncing;
     function done(c) {
       S.catalog = c; S.loading = false; restoreFromUrl();
+      if (DEMO) seedDemoSystem(c);
       if (window.SignoffInvites && !DEMO) window.SignoffInvites.refresh();
       // A flash under way keeps the bytes it has; a list that changed under the open firmware fetches it again.
       if (current() && !(S.run && S.run.busy) && !(S.bytesReady && bytesFor && bytesFor.key === runKey())) prepareBytes();
@@ -1186,6 +1187,22 @@
       idbFile('put', sys.id, { name: file.name, bytes: file.bytes }).then(function (ok) { if (!ok) toast('This browser won’t keep the file; open it again next visit.'); });
       systemChanged();
     }, function (e) { toast(f.name + ': ' + (e.message || e)); });
+  }
+  /* ?demo: the display's firmware lives in a ready-made passthrough system (Chris, 2026-11-17), not the list: the Main
+     PCBA as the host, the Display & Sensor Board as the remote, and its 1.4.0 build. Made once per browser; removing
+     it keeps it removed (flasher.demo.systemSeeded). */
+  var DEMO_SYS_ID = 'sdemodisplay';
+  function seedDemoSystem(c) {
+    try { if (localStorage.getItem('flasher.demo.systemSeeded')) return; localStorage.setItem('flasher.demo.systemSeeded', '1'); } catch (e) { return; }
+    if (!c.demoDisplayHex || readSystems().some(function (x) { return x.id === DEMO_SYS_ID; })) return;
+    var bytes = new TextEncoder().encode(c.demoDisplayHex()), name = 'display-1.4.0.hex';
+    I.sha256(bytes).then(function (h) {
+      var sys = newSystem();
+      sys.id = DEMO_SYS_ID; sys.name = 'Thermostat display';
+      sys.host = { name: 'Smart Thermostat Main PCBA', usb: [{ vid: 0x0483, pid: 0x5740 }] };
+      sys.remote = { name: 'Display & Sensor Board', file: { name: name, sha256: h, size: bytes.length }, seen: null };
+      return idbFile('put', sys.id, { name: name, bytes: bytes }).then(function () { storeSystem(sys); renderSide(); });
+    });
   }
   /* ?demo: the made-up display's current release as a .hex, as the build would write it. */
   function demoSystemFile() {

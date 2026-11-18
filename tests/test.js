@@ -466,7 +466,7 @@
   });
   test('the demo catalog: valid images that match their hashes', function () {
     return FL.catalog.loadDemo().then(function (c) {
-      eq(c.firmware.length, 4); eq(c.problems.length, 0);
+      eq(c.firmware.length, 5, 'the display’s firmware is in the demo’s passthrough system, not the list'); eq(c.problems.length, 0);
       return Promise.all(c.firmware.map(function (f) {
         return c.fetch(f).then(function (b) {
           if (f.kind !== 'units') ok(I.check(b, c.boards[f.board]).ok, f.id + ' passes the checks');
@@ -702,7 +702,7 @@
   });
 
   test('the demo display’s .hex, split from its INFO, gives the published firmware’s blocks exactly', async function () {
-    var c = await FL.catalog.loadDemo(), fw = c.firmware.filter(function (f) { return f.board === 'tstat-display'; })[0];
+    var c = await FL.catalog.loadDemo(), fw = c.bridgeFirmware.filter(function (f) { return f.board === 'tstat-display'; })[0];
     var hex = FL.files.parse('display.hex', new TextEncoder().encode(c.demoDisplayHex()));
     var sim = c.demoSystemSim(fw.id), link = new B.Link(FB.port(sim));
     await link.open(1000000);
@@ -802,7 +802,7 @@
   });
 
   test('the demo’s display board updates through the simulated passthrough', async function () {
-    var c = await FL.catalog.loadDemo(), f = c.firmware.filter(function (x) { return x.kind === 'units'; })[0], b = c.boards[f.board];
+    var c = await FL.catalog.loadDemo(), f = c.bridgeFirmware[0], b = c.boards[f.board];
     eq(c.problems.length, 0, c.problems.join('; '));
     var sim = c.demoDisplay(f.id); sim.latency = 0; sim.eraseMs = 0; sim.bootMs = 0;
     var link = new B.Link(FB.port(sim));
