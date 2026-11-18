@@ -106,7 +106,7 @@
 </div>
 <div id="sheet-root"></div>
 <div class="toasts" id="toasts"></div>
-<input type="file" id="file-input" accept=".bin,application/octet-stream" hidden>
+<input type="file" id="file-input" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot,application/octet-stream" hidden>
 <!-- The probe's own file pickers (assets/probe/app.js). -->
 <input type="file" id="pb-file" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot" hidden>
 <input type="file" id="pb-svd" accept=".svd,.xml" hidden>
@@ -128,6 +128,8 @@
 <script src="assets/fakebridge.js"></script>
 <script src="assets/catalog.js"></script>
 <script src="assets/route.js"></script>
+<!-- Programming files (.hex, .elf, .srec): read for a file from this computer, and by the probe. -->
+<script src="assets/probe/files.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

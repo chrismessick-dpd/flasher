@@ -78,6 +78,15 @@ page, with Web Serial only (`assets/sboot.js`):
    restarts the board. That happens after a failure too. A board whose update was begun and not
    finished waits in its bootloader until an update finishes, so an interrupted update is run again.
 
+**A file from this computer** reaches a bridge board too: drop a `.hex` or `.elf` on the page (or Open a
+file…) and pick the board, marked "(through its passthrough)". The page splits the file into the board's
+erase units exactly as `publish.py` splits a published ELF (`FL.image.unitsImage`: each unit filled with 0xFF
+and the image laid over it, its CRC-32, parts in 1 MB windows, and COMMIT over the application's units), then
+updates it as above, Compare only included. It needs the board's `units` layout in the manifest, which
+`publish.py` writes with the board (`--board-only` adds it to a board already published). A `.bin` is refused
+for these boards: it has no addresses, and their image spans more than one memory. The file must hold the
+application from its region's base, since COMMIT covers it.
+
 The protocol is Dovetail's serial bootloader protocol 1: frames of `55 A5 | cmd | seq | len16 |
 payload | crc32` (responses `5A C3`, `cmd | 0x80`, a status byte first), zlib's CRC-32 over
 everything after the sync. A response to an older request is read past; only a timeout or a
@@ -211,7 +220,8 @@ users.json            flasher_data only: the People list
 - `layout` is the DfuSe layout to use if the browser can't read the device's alternate setting names.
 - A bridge board (*Bridge boards* above) is `"kind": "bridge"`, with `touch` (the host firmware's USB
   ids, a list), `bridge` (the passthrough port's id), `touchBaud`, `exitBaud`, `linkBaud`,
-  `fastBaud`, and `expect` (`device`, `appBase`, `qspiBase`, `singleBank`, as INFO reports them). It
+  `fastBaud`, `expect` (`device`, `appBase`, `qspiBase`, `singleBank`, as INFO reports them), and `units`
+  (its erase units, from `flasher.json`, for files from a computer). It
   has no `flash`, `ram`, or `dfu`. Its firmware is `"kind": "units"`: `path` is a folder,
   `parts` lists its files (`<path><8 hex digits of the address>.bin`, each with `addr`, `size`,
   `sha256`, and `units`: `[addr, size, crc32]` back to back), `size` is their total, and `commit`

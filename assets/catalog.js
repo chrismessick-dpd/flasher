@@ -91,6 +91,7 @@
         touch: [{ vid: '0x0483', pid: '0x5740', name: 'Acme Thermostat' }], touchBaud: 2400, exitBaud: 1200,
         bridge: { vid: '0x0483', pid: '0x5742', name: 'Acme Thermostat passthrough' }, linkBaud: 1000000, fastBaud: 4000000,
         expect: { device: '0x4A5', appBase: '0x08010000', qspiBase: '0x70000000', singleBank: true },
+        units: { regions: [{ base: '0x08010000', sizes: ['0x8000', '0x10000'], app: true }, { base: '0x70000000', end: '0x70160000', unit: '0x10000' }] },
         notes: 'The Display & Sensor Board (Signoff EE board pdemo11) has no USB port of its own. Flasher reaches its bootloader through the Main PCBA’s USB-C port, which passes the link through.'
       }
     },

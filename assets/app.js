@@ -59,9 +59,27 @@
     }
     if (S.view === 'local' && S.local) {
       var b = boards()[S.local.boardId] || I.GENERIC;
+      if (b.kind === 'bridge') return { fw: localUnits(b), board: b };
       return { fw: { id: 'local', name: S.local.name, size: S.local.bytes.length, sha256: S.local.sha256, local: true }, board: b };
     }
     return null;
+  }
+
+  // A file from this computer for a board reached through a passthrough: its .hex or .elf split into that board's
+  // blocks, as publish.py splits a published image (FL.image.unitsImage). Kept until the file or board changes.
+  var unitsFor = null;
+  function localUnits(b) {
+    var key = S.local.sha256 + '|' + b.id;
+    if (unitsFor && unitsFor.key === key) return unitsFor.fw;
+    var fw = { id: 'local', name: S.local.name, size: S.local.bytes.length, sha256: S.local.sha256, local: true, kind: 'units', units: [], parts: [] };
+    if (!b.units) fw.error = 'Flasher doesn’t know ' + b.name + '’s blocks yet: its sector layout isn’t in the firmware list. Publish its details (publish.py --board-only), or flash a published image.';
+    else if (!S.local.segments) fw.error = 'A .bin has no addresses, and ' + b.name + '’s image can span more than one memory. Use the .hex or .elf the build makes.';
+    else {
+      try { Object.assign(fw, I.unitsImage(S.local.segments, b.units, FL.sboot.crc32)); fw.local = true; fw.id = 'local'; fw.name = S.local.name; fw.sha256 = S.local.sha256; }
+      catch (e) { fw.error = e.message; }
+    }
+    unitsFor = { key: key, fw: fw };
+    return fw;
   }
 
   // ── Loading the catalog ──
@@ -217,7 +235,7 @@
     var fileRow = '<button class="proj fl-file-row' + (S.view === 'local' ? ' active' : '') + '" data-act="' + (S.local ? 'open-local' : 'open-file') + '" title="Flash a .bin file from this computer">' +
       '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
       '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
-      esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, flashed to any STM32') + '</span></span></button>';
+      esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, .hex, or .elf; or drop it here') + '</span></span></button>';
     list.innerHTML = fileRow + h;
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
@@ -334,11 +352,11 @@
       links: [false], note: 'Pick firmware to flash', cells: FL.route.passes(24, 0, 0, 0),
       legend: [['unk', 'Not written yet'], ['erased', 'Erased'], ['diff', 'Written'], ['done', 'Read back and checked']]
     });
-    return '<div class="card fl-panel"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">Flash</button></div><div class="fl-tab-body">' + route +
+    return '<div class="card fl-panel' + (detailsHidden() ? ' terse' : '') + '"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">Flash</button>' + detailsBtn() + '</div><div class="fl-tab-body">' + route +
       '<div class="fl-flash"><p class="fl-intro">Pick the firmware in the list on the left' + (S.catalog || DEMO ? '' : ' (once signed in)') + ', or flash a <b>.bin</b> file from this computer.</p>' +
       '<ol class="fl-steps">' +
       '<li class="fl-step"><span class="fl-num">1</span><div><div class="fl-step-title">Pick the firmware</div><div class="fl-step-sub">From a project in the list, or a file. A project’s firmware knows its board and how to restart it.</div>' +
-      '<div class="fl-row"><button class="btn" data-act="open-file">Open a .bin file…</button></div></div></li>' +
+      '<div class="fl-row"><button class="btn" data-act="open-file">Open a file…</button><span class="fl-muted">or drop a .bin, .hex, or .elf anywhere on the page</span></div></div></li>' +
       '<li class="fl-step"><span class="fl-num">2</span><div><div class="fl-step-title">Put the board in update mode</div><div class="fl-step-sub">Flasher restarts it over USB when its firmware listens for that; otherwise BOOT0 and reset, by hand.</div></div></li>' +
       '<li class="fl-step"><span class="fl-num">3</span><div><div class="fl-step-title">Write, check, and run it</div><div class="fl-step-sub">Flasher erases the board, writes the firmware, reads it back to check every byte, and starts it.</div></div></li>' +
       '</ol><div class="fl-row"><button class="btn btn-primary" disabled title="Pick firmware first">Flash board</button><span class="fl-muted">Pick firmware first.</span></div></div></div></div>';
@@ -347,17 +365,19 @@
     var fw = c.fw, b = c.board, run = S.run && S.run.key === runKey() ? S.run : null;
     var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">' + esc(b.name) + '</div>' +
       '<h1 class="page-title">' + esc(fw.name) + '</h1><div class="page-sub"><span class="chips">' +
-      '<span class="chip">' + esc(b.kind === 'bridge' ? I.fmtBytes(fw.size) + ' in ' + fw.units.length + ' blocks' : I.fmtBytes(fw.size) + ' of ' + I.fmtBytes(b.flash.size)) + '</span>' +
+      '<span class="chip">' + esc(b.kind === 'bridge' ? I.fmtBytes(fw.size) + (fw.units && fw.units.length ? ' in ' + fw.units.length + ' blocks' : '') : I.fmtBytes(fw.size) + ' of ' + I.fmtBytes(b.flash.size)) + '</span>' +
       (fw.built ? '<span class="chip">Built ' + esc(fmtDate(fw.built)) + '</span>' : '') +
       (fw.source && fw.source.sha ? '<span class="chip" title="' + esc(fw.source.repo + ' ' + fw.source.path) + '">' + esc((fw.source.repo || '').split('/').pop() + ' @ ' + fw.source.sha.slice(0, 7)) + '</span>' : '') +
       (fw.source && fw.source.dirty ? '<span class="chip fl-chip-warn" title="The checkout it was built from had uncommitted changes">Uncommitted changes</span>' : '') +
       '<span class="chip fl-mono" title="SHA-256 ' + esc(fw.sha256) + '">' + esc(fw.sha256.slice(0, 12)) + '</span></span></div></div></div>';
     h += browserNote();
     if (fw.local) {
-      var opts = Object.keys(boards()).filter(function (id) { return boards()[id].kind !== 'bridge'; }).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + '</option>'; }).join('');
+      // Every board, those reached through another board's passthrough too (a .hex or .elf is split into its blocks).
+      var opts = Object.keys(boards()).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + (boards()[id].kind === 'bridge' ? ' (through its passthrough)' : '') + '</option>'; }).join('');
       h += '<div class="card fl-pad"><div class="field"><label for="local-board">Board</label><select class="input" id="local-board" data-change="local-board">' + opts +
         '<option value=""' + (S.local.boardId && boards()[S.local.boardId] ? '' : ' selected') + '>' + esc(I.GENERIC.name) + '</option></select></div>' +
-        '<p class="note">The board decides the checks (flash size, RAM) and how it’s put in update mode.' + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p>' +
+        '<p class="note">' + (b.kind === 'bridge' ? 'Flasher splits the file into ' + esc(b.name) + '’s blocks, compares each with the board, and writes only the ones that differ.'
+          : 'The board decides the checks (flash size, RAM) and how it’s put in update mode.') + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p>' +
         '<div class="fl-row"><button class="btn" data-act="open-file">Open another file…</button></div></div>';
     } else if (fw.description) {
       // Collapsible; the choice is kept for this browser (flasher.v1.about).
@@ -367,9 +387,19 @@
         '<div class="fl-desc">' + esc(fw.description) + '</div></details>';
     }
     // One panel: the update. The board's console is the Console tab.
-    h += '<div class="card fl-panel"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(b.kind === 'bridge' ? BRIDGE_TAB : 'Flash') + '</button></div>' +
+    h += '<div class="card fl-panel' + (detailsHidden() ? ' terse' : '') + '"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(b.kind === 'bridge' ? BRIDGE_TAB : 'Flash') + '</button>' + detailsBtn() + '</div>' +
       '<div class="fl-tab-body">' + (b.kind === 'bridge' ? bridgeHtml(c, run) : flashHtml(c, run)) + '</div></div>';
     return h + '</div>';
+  }
+
+  // The ⓘ at the top right of a flash panel hides its explanations (the intro and each step's text),
+  // leaving the route, the step titles, and the buttons (Chris, 2026-11-17). Kept per browser.
+  var DETAILS_KEY = 'flasher.v1.detailsHidden';
+  function detailsHidden() { try { return localStorage.getItem(DETAILS_KEY) === '1'; } catch (e) { return false; } }
+  function detailsBtn() {
+    var off = detailsHidden(), tip = off ? 'Show the details' : 'Hide the details';
+    return '<button type="button" class="icon-btn fl-details-btn' + (off ? '' : ' on') + '" data-act="toggle-details" aria-pressed="' + !off + '" title="' + tip + '" aria-label="' + tip + '">' +
+      '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.5"/><path d="M10 9v5"/><circle cx="10" cy="6.2" r=".6" fill="currentColor"/></svg></button>';
   }
 
   // ── The route diagram above each update (assets/route.js) ──
@@ -530,7 +560,13 @@
     S.check = null; S.bytesReady = false; S.bytesError = '';
     if (!c) return;
     if (c.board.kind === 'bridge') { S.bytesReady = true; return; }
-    var got = c.fw.local ? Promise.resolve(S.local.bytes) : bytesFor && bytesFor.key === key ? Promise.resolve(bytesFor.bytes) : S.catalog.fetch(c.fw);
+    var flat = null;
+    if (c.fw.local && S.local.segments) {
+      var base = (c.board.flash || I.GENERIC.flash).base;
+      flat = FL.files.flatten(S.local.segments);
+      if (flat.addr !== base) { S.bytesError = 'This file starts at ' + I.hex(flat.addr) + ', and ' + (c.board.id === I.GENERIC.id ? 'the board' : c.board.name) + '’s flash starts at ' + I.hex(base) + '.'; return; }
+    }
+    var got = c.fw.local ? Promise.resolve(flat ? flat.data : S.local.bytes) : bytesFor && bytesFor.key === key ? Promise.resolve(bytesFor.bytes) : S.catalog.fetch(c.fw);
     got.then(function (bytes) {
       if (runKey() !== key) return;
       bytesFor = { key: key, bytes: bytes };
@@ -793,7 +829,9 @@
   function demoBridgePort(c) {
     var b = c.board;
     if (!demoBridge.sim) {
-      var sim = demoBridge.sim = S.catalog.demoDisplay(c.fw.id);
+      // A file from this computer holds no demo id: the simulated board starts from that board's published release.
+      var simId = c.fw.local ? (S.catalog.firmware.filter(function (f) { return f.board === b.id; })[0] || {}).id : c.fw.id;
+      var sim = demoBridge.sim = S.catalog.demoDisplay(simId);
       demoBridge.port = FL.fakebridge.port(sim, { vid: b.bridge.vid, pid: b.bridge.pid, exitBaud: b.exitBaud, onExit: function () {
         demoBridge.up = false;
         // The host restarts the display into its own firmware; the next passthrough boots it again.
@@ -845,6 +883,7 @@
     if (run && run.error) h += '<div class="hint fl-bad"><b>' + esc(run.errorTitle || 'The update stopped') + '</b>' + esc(run.error) + '</div>';
     if (run && run.ok) h += '<div class="hint fl-good"><b>' + esc(run.doneTitle) + '</b>' + esc(run.doneText) + '</div>';
     h += '<div class="fl-row">';
+    if (c.fw.error) h += '<div class="hint fl-bad"><b>This file can’t be written to ' + esc(b.name) + '</b>' + esc(c.fw.error) + '</div>';
     var blocked = (!DEMO && !navigator.serial) || !(c.fw.units && c.fw.units.length);
     if (run && run.waitPick && !busy) h += '<button class="btn btn-primary" data-act="pick-bridge">Pick ' + esc(via) + '</button>';
     else {
@@ -931,6 +970,7 @@
       return FL.sboot.update(link, { units: c.fw.units, parts: c.fw.parts, commit: c.fw.commit }, {
         expect: b.expect, fastBaud: b.fastBaud, compareOnly: run.compareOnly, log: log, progress: progress,
         fetchPart: function (part) {
+          if (c.fw.local) return Promise.resolve(part.bytes);
           log('Downloading ' + part.path.split('/').pop() + ' (' + I.fmtBytes(part.size) + ')…');
           return S.catalog.fetch({ repo: c.fw.repo, path: part.path, sha256: part.sha256 });
         }
@@ -1392,7 +1432,7 @@
   }
 
   // ── The Debug probe tab: assets/probe/, loaded the first time the tab opens ──
-  var PROBE_FILES = ['files', 'stlink', 'jlink', 'target', 'stm32', 'svd', 'fakeprobe', 'app'];
+  var PROBE_FILES = ['stlink', 'jlink', 'target', 'stm32', 'svd', 'fakeprobe', 'app'];
   var probeLoading = null, probeWas = false;
   function loadProbe() {
     if (FL.probeApp) return Promise.resolve();
@@ -1455,6 +1495,16 @@
       case 'bridge-compare': startBridge(true); break;
       case 'pick-bridge': pickBridge(); break;
       case 'pick-dfu': { var c = current(); if (c && S.run) { S.run.busy = true; S.run.waitPick = false; upd(); askForDfu(c, false); } break; }
+      case 'toggle-details': {
+        var hide = !detailsHidden();
+        try { localStorage.setItem(DETAILS_KEY, hide ? '1' : ''); } catch (e) { /* storage blocked: this view only */ }
+        document.querySelectorAll('.fl-panel').forEach(function (x) { x.classList.toggle('terse', hide); });
+        document.querySelectorAll('.fl-details-btn').forEach(function (x) {
+          var tip = hide ? 'Show the details' : 'Hide the details';
+          x.classList.toggle('on', !hide); x.setAttribute('aria-pressed', String(!hide)); x.title = tip; x.setAttribute('aria-label', tip);
+        });
+        break;
+      }
       case 'flash-byhand': S.skipTouch = true; S.run = null; startFlash(); break;
       case 'console': openConsole(); break;
       case 'console-board': { var cb = current(); S.tab = 'console'; openConsole(cb ? { board: cb.board } : {}); break; }
@@ -1583,18 +1633,44 @@
     }
   }, true);
 
-  $('#file-input').addEventListener('change', function () {
-    var f = this.files && this.files[0]; this.value = '';
+  // A file from this computer: a .bin, or a .hex or .elf (FL.files reads their addresses), picked or dropped.
+  function openLocal(f) {
     if (!f) return;
-    if (f.size > 16 * 1048576) return toast('That file is over 16 MB; it isn’t firmware for these boards.');
+    if (S.run && S.run.busy) return toast('Wait for the flash to finish.');
+    if (f.size > 64 * 1048576) return toast('That file is over 64 MB; it isn’t firmware for these boards.');
     f.arrayBuffer().then(function (buf) {
-      var bytes = new Uint8Array(buf);
+      var bytes = new Uint8Array(buf), segments = null;
+      if (!/\.bin$/i.test(f.name)) {
+        try { var img = FL.files.parse(f.name, bytes); if (!img.needsBase) segments = img.segments; }
+        catch (e) { return toast(f.name + ': ' + e.message); }
+      }
+      if (!segments && bytes.length > 16 * 1048576) return toast('That .bin is over 16 MB; it isn’t firmware for these boards.');
       return I.sha256(bytes).then(function (h) {
         var ids = Object.keys(boards());
-        S.local = { name: f.name, bytes: bytes, sha256: h, boardId: S.local && boards()[S.local.boardId] ? S.local.boardId : ids.length === 1 ? ids[0] : '' };
+        S.local = { name: f.name, bytes: bytes, segments: segments, sha256: h, boardId: S.local && boards()[S.local.boardId] ? S.local.boardId : ids.length === 1 ? ids[0] : '' };
+        unitsFor = null;
+        if (S.tab === 'console') S.tab = 'serial';
         select('local');
       });
     });
+  }
+  $('#file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; openLocal(f); });
+  // Drag and drop: a file dropped on the page opens as Open a file does; on the Debug probe tab, in the probe.
+  function draggingFiles(ev) { return ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types || [], 'Files') >= 0; }
+  var dragDepth = 0;
+  document.addEventListener('dragenter', function (ev) { if (!draggingFiles(ev)) return; dragDepth++; document.body.classList.add('fl-dropping'); });
+  document.addEventListener('dragleave', function (ev) { if (!draggingFiles(ev)) return; if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('fl-dropping'); } });
+  document.addEventListener('dragover', function (ev) { if (draggingFiles(ev)) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+  document.addEventListener('drop', function (ev) {
+    if (!draggingFiles(ev)) return;
+    ev.preventDefault(); dragDepth = 0; document.body.classList.remove('fl-dropping');
+    var f = ev.dataTransfer.files && ev.dataTransfer.files[0];
+    if (!f) return;
+    if (S.tab === 'probe' && $('#pb-file')) {
+      var dt = new DataTransfer(); dt.items.add(f); $('#pb-file').files = dt.files; $('#pb-file').dispatchEvent(new Event('change'));
+      return;
+    }
+    openLocal(f);
   });
 
   // Never leave mid-flash: the board would be left half-written (recoverable, but slow).

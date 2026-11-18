@@ -217,7 +217,8 @@
 @media (prefers-reduced-motion: reduce) { .fl-chain .via.on::after, .fl-blk.now { animation: none; } }
 /* A panel too narrow for the stops side by side stacks them, links running down. */
 @container (max-width: 700px) {
-  .fl-chain { flex-direction: column; gap: 4px; border-radius: 14px; font-size: 17px; }
+  /* One column, centered in the panel as a group, the stops' left edges lined up (Chris, 2026-11-17). */
+  .fl-chain { display: grid; grid-template-columns: fit-content(100%); justify-content: center; justify-items: start; gap: 4px; border-radius: 14px; font-size: 17px; }
   .fl-chain .via { flex: none; width: 3px; height: 16px; min-width: 0; margin: 0 0 0 9px; }
   .fl-chain .via.on::after { left: 0; right: 0; width: auto; height: 6px; animation-name: fl-run-down; }
   .fl-chain .hop-text { white-space: normal; }
@@ -250,3 +251,15 @@ body.has-banner .fl-con-page { height: calc(100vh - 56px - 34px); }
 /* Home's sign-in note, and the demo link beside its buttons */
 .hint.fl-signin .fl-row { margin-top: 10px; }
 .fl-demo-link { color: var(--accent); font-size: 13px; }
+
+/* The flash panel's details toggle (ⓘ, top right): hidden details leave the route, step titles, and buttons. */
+.fl-tabs .fl-details-btn { margin-left: auto; align-self: center; width: 30px; height: 30px; padding: 0; color: var(--text-3); border-radius: 8px; }
+.fl-tabs button.fl-details-btn::after { content: none; }
+.fl-tabs .fl-details-btn svg { width: 18px; height: 18px; }
+.fl-tabs .fl-details-btn.on { color: var(--accent-ink); background: var(--accent-soft); }
+:root[data-theme="dark"] .fl-tabs .fl-details-btn.on { color: #5fd0dc; }
+.fl-panel.terse .fl-intro, .fl-panel.terse .fl-step-sub, .fl-panel.terse .fl-manual { display: none; }
+.fl-panel.terse .fl-step { padding: 8px 0; align-items: center; }
+
+/* A file dragged over the page: the main pane shows where it lands. */
+body.fl-dropping #main { outline: 3px dashed var(--accent); outline-offset: -8px; }

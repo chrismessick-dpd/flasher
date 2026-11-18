@@ -99,6 +99,17 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   and without an answer, console pause, probe programming the picked firmware), light, dark, and 375 px. Not
   tried on hardware.
 
+- **Files through the passthrough, and drag and drop (2026-11-17, Chris: "the drag and drop program type
+  ability", .hex or .elf only).** A `.hex` or `.elf` dropped on the page (or opened) can go to a bridge board: the
+  page splits it into the board's erase units as `publish.py` does (`FL.image.unitsImage`, tested against
+  `test_publish.py`'s cases), from the board's `units` layout, which `publish.py` now writes into the board's
+  manifest entry (`--board-only` for one already published). A `.hex` or `.elf` for a direct board is flattened at
+  its flash base. Files drop anywhere; on the Debug probe tab they go to the probe. `assets/probe/files.js` loads with
+  the page. Also: the ⓘ details toggle on flash panels (`flasher.v1.detailsHidden`), and the stacked route centered
+  with its left edges aligned. Tried in `?demo` (the display's blocks from a dropped `.hex`, 4 of 24 rewritten).
+  The real display board's layout was written at Chris's OK (`--board-only`, `flasher_data` `7810c80`, proven additive, read
+  back: only `units` added to its entry). Not yet tried on the board: a `.hex` from its build with Compare only first.
+
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:

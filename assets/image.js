@@ -107,7 +107,91 @@
       id: id, kind: 'bridge', name: str(b.name, 80) || id, mcu: str(b.mcu, 60), notes: str(b.notes, 1200),
       run: touch[0], runs: touch, touchBaud: touchBaud, exitBaud: exitBaud, bridge: bridge, linkBaud: link, fastBaud: fast,
       expect: { device: opt(ex.device), appBase: opt(ex.appBase), qspiBase: opt(ex.qspiBase), singleBank: !!ex.singleBank },
+      // units: the board's erase-unit layout, as flasher.json gives it (publish.py --board-only writes it), so the
+      // page can split a .hex or .elf from this computer into blocks itself. Without it, only published firmware.
+      units: unitLayout(b.units),
       manualDfu: [], flash: null, ram: null, dfu: null
+    };
+  }
+
+  /* A bridge board's erase units, as flasher.json and publish.py's unit_map describe them: skip (address
+     ranges left out), and regions, each { base, sizes: [...] } or { base, end, unit }, with app: true on the
+     regions COMMIT covers. Returns the cleaned layout, or null when it's missing or doesn't validate. */
+  function unitLayout(u) {
+    if (!u || typeof u !== 'object' || !Array.isArray(u.regions) || !u.regions.length) return null;
+    var regions = [];
+    for (var i = 0; i < u.regions.length && i < 16; i++) {
+      var rg = u.regions[i] || {}, base = num(rg.base);
+      if (!(base >= 0)) return null;
+      if (Array.isArray(rg.sizes)) {
+        var starts = [], at = base;
+        for (var k = 0; k < rg.sizes.length && k < 256; k++) { var sz = num(rg.sizes[k]); if (!(sz > 0)) return null; starts.push([at, sz]); at += sz; }
+        regions.push({ lo: base, hi: at, starts: starts, unit: 0, app: !!rg.app });
+      } else {
+        var unit = num(rg.unit), end = num(rg.end);
+        if (!(unit > 0) || !(end > base) || (end - base) % unit) return null;
+        regions.push({ lo: base, hi: end, starts: null, unit: unit, app: !!rg.app });
+      }
+    }
+    if (!regions.some(function (r) { return r.app; })) return null;
+    var skip = (Array.isArray(u.skip) ? u.skip : []).map(function (x) { return [num(x && x[0]), num(x && x[1])]; }).filter(function (x) { return x[0] >= 0 && x[1] > x[0]; });
+    return { regions: regions, skip: skip };
+  }
+
+  /* A file's segments ({ addr, data }) as the board's erase units, exactly as publish.py's split_units and
+     units_entry make them: each unit the image touches, filled with 0xFF and the image laid over it, its CRC-32,
+     the units grouped into parts within 1 MB windows, and the COMMIT record over the application's units, which
+     must run back to back from its region's base. crc32 is FL.sboot.crc32. Throws with a reason. */
+  function unitsImage(segments, layout, crc32) {
+    function unitFor(addr) {
+      for (var i = 0; i < layout.regions.length; i++) {
+        var r = layout.regions[i];
+        if (addr >= r.lo && addr < r.hi) {
+          if (r.unit) return { start: r.lo + Math.floor((addr - r.lo) / r.unit) * r.unit, size: r.unit, region: i };
+          for (var k = 0; k < r.starts.length; k++) if (addr >= r.starts[k][0] && addr < r.starts[k][0] + r.starts[k][1]) return { start: r.starts[k][0], size: r.starts[k][1], region: i };
+        }
+      }
+      throw new Error(hex(addr) + ' is outside every block this board’s bootloader writes (its own sectors, or not flash).');
+    }
+    var units = {}, skipped = 0;
+    segments.forEach(function (sg) {
+      var addr = sg.addr >>> 0, data = sg.data;
+      if (layout.skip.some(function (x) { return addr >= x[0] && addr < x[1]; })) { skipped += data.length; return; }
+      var pos = 0;
+      while (pos < data.length) {
+        var u = unitFor(addr + pos), cur = units[u.start];
+        if (!cur) cur = units[u.start] = { addr: u.start, size: u.size, region: u.region, bytes: new Uint8Array(u.size).fill(0xFF) };
+        var off = addr + pos - u.start, n = Math.min(data.length - pos, u.size - off);
+        cur.bytes.set(data.subarray(pos, pos + n), off);
+        pos += n;
+      }
+    });
+    var list = Object.keys(units).map(function (k) { return units[k]; }).sort(function (a, b) { return a.addr - b.addr; });
+    if (!list.length) throw new Error('The file has nothing in the blocks this board’s bootloader writes.');
+    var parts = [];
+    list.forEach(function (u) {
+      u.crc = crc32(u.bytes);
+      var p = parts[parts.length - 1];
+      if (p && p.addr + p.size === u.addr && Math.floor(p.addr / 0x100000) === Math.floor(u.addr / 0x100000)) { p.members.push(u); p.size += u.size; }
+      else parts.push({ addr: u.addr, size: u.size, members: [u] });
+    });
+    parts.forEach(function (p) {
+      p.path = 'local/' + p.addr.toString(16).padStart(8, '0') + '.bin';
+      p.bytes = new Uint8Array(p.size);
+      p.members.forEach(function (u) { p.bytes.set(u.bytes, u.addr - p.addr); u.part = p; });
+    });
+    var appRegion = layout.regions.filter(function (r) { return r.app; })[0], app = list.filter(function (u) { return layout.regions[u.region].app; });
+    if (!app.length) throw new Error('The file has no application (nothing at ' + hex(appRegion.lo) + '), and the bootloader’s commit covers it. Use the image built with the application.');
+    var at = appRegion.lo, ccrc = 0, clen = 0;
+    app.forEach(function (u) {
+      if (u.addr !== at) throw new Error('The application’s blocks must run back to back from ' + hex(appRegion.lo) + '; there’s a gap at ' + hex(at) + '.');
+      ccrc = crc32(u.bytes, ccrc); clen += u.size; at += u.size;
+    });
+    return {
+      kind: 'units', skipped: skipped, size: list.reduce(function (n, u) { return n + u.size; }, 0),
+      units: list.map(function (u) { return { addr: u.addr, size: u.size, crc: u.crc, part: u.part }; }),
+      parts: parts.map(function (p) { return { path: p.path, addr: p.addr, size: p.size, bytes: p.bytes }; }),
+      commit: { crc: ccrc >>> 0, length: clen }
     };
   }
 
@@ -179,5 +263,5 @@
     notes: 'No checks beyond “is this firmware”: the flash size comes from the board once it’s connected. Flasher tries a 1200-baud restart on the serial port picked; without an answer, the board goes into update mode by hand.'
   }, []);
 
-  FL.image = { check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
+  FL.image = { unitLayout: unitLayout, unitsImage: unitsImage, check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
 })(window.FL = window.FL || {});

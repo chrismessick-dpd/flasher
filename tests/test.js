@@ -558,6 +558,53 @@
     await link.close();
   });
 
+  // The same layout and cases as tests/test_publish.py's Units: the page must split a file exactly as publish.py does.
+  var LAYOUT = I.unitLayout({ skip: [['0x0800C000', '0x08010000']],
+    regions: [{ base: '0x08010000', sizes: ['0x8000', '0x10000', '0x10000'], app: true }, { base: '0x70000000', end: '0x70400000', unit: '0x10000' }] });
+  function fill(n, v) { return new Uint8Array(n).fill(v); }
+
+  test('units: a file splits into the board’s blocks as publish.py splits them', function () {
+    ok(LAYOUT, 'the layout cleans');
+    var img = I.unitsImage([{ addr: 0x0800C000, data: new Uint8Array([0x53, 0x57, 0x44, 0x50]) }, { addr: 0x08010000, data: fill(0x8010, 1) }, { addr: 0x7000FFF0, data: fill(0x20, 2) }], LAYOUT, B.crc32);
+    eq(img.skipped, 4, 'the record sector is left out');
+    eq(img.units.map(function (u) { return u.addr; }).join(), [0x08010000, 0x08018000, 0x70000000, 0x70010000].join(), 'a segment spills into the next unit');
+    var u1 = img.units[1], p1 = u1.part.bytes.subarray(u1.addr - u1.part.addr, u1.addr - u1.part.addr + u1.size);
+    eq(u1.size, 0x10000); eq(p1[0x0F], 1); eq(p1[0x10], 0xFF, '0xFF past the image');
+    eq(u1.crc, B.crc32(p1), 'each block carries its CRC');
+    eq(img.commit.length, 0x8000 + 0x10000, 'COMMIT covers the application’s blocks');
+  });
+
+  test('units: parts in 1 MB windows, and the commit refuses a gap or no application', function () {
+    var segs = [{ addr: 0x08010000, data: fill(0x100, 1) }, { addr: 0x08018000, data: fill(0x10, 3) }];
+    for (var k = 0; k < 20; k++) segs.push({ addr: 0x70000000 + k * 0x10000, data: fill(0x10000, k) });
+    var img = I.unitsImage(segs, LAYOUT, B.crc32);
+    eq(img.parts.map(function (p) { return p.addr; }).join(), [0x08010000, 0x70000000, 0x70100000].join(), '1 MB windows');
+    eq(img.parts[1].size, 0x100000);
+    var app = img.units.filter(function (u) { return u.addr < 0x70000000; }), crc = 0;
+    app.forEach(function (u) { crc = B.crc32(u.part.bytes.subarray(u.addr - u.part.addr, u.addr - u.part.addr + u.size), crc); });
+    eq(img.commit.crc, crc >>> 0, 'COMMIT’s CRC runs over the application’s blocks in order');
+    var thrown = '';
+    try { I.unitsImage([{ addr: 0x08018000, data: fill(4, 1) }], LAYOUT, B.crc32); } catch (e) { thrown = e.message; }
+    ok(/gap/.test(thrown), 'a gap before the application refused: ' + thrown);
+    thrown = '';
+    try { I.unitsImage([{ addr: 0x70000000, data: fill(4, 1) }], LAYOUT, B.crc32); } catch (e) { thrown = e.message; }
+    ok(/no application/.test(thrown), 'no application refused: ' + thrown);
+    thrown = '';
+    try { I.unitsImage([{ addr: 0x08000000, data: fill(4, 1) }], LAYOUT, B.crc32); } catch (e) { thrown = e.message; }
+    ok(/outside/.test(thrown), 'outside every block refused: ' + thrown);
+  });
+
+  test('units: a file’s blocks update a bridge board through the simulated passthrough', async function () {
+    var now = bridgeImage(9), sim = bridgeSim(bridgeImage(9, true)), link = new B.Link(FB.port(sim));
+    var layout = I.unitLayout({ regions: [{ base: '0x08010000', sizes: ['0x8000', '0x10000'], app: true }, { base: '0x70000000', end: '0x70100000', unit: '0x10000' }] });
+    var img = I.unitsImage(now.map(function (u) { return { addr: u.addr, data: u.bytes }; }), layout, B.crc32);
+    await link.open(1000000);
+    var res = await B.update(link, img, { expect: EXPECT, fetchPart: function (p) { return Promise.resolve(p.bytes); } });
+    eq(res.changed.length, 2, 'only the blocks that differ'); eq(sim.record, B.RECORD.COMPLETE, 'committed');
+    now.forEach(function (u) { eq(B.crc32(sim.read(u.addr, u.size)), B.crc32(u.bytes), 'block ' + B.hex(u.addr)); });
+    await link.close();
+  });
+
   test('route: the block map fills by erase, write, and verify', function () {
     var R = FL.route;
     eq(R.passes(4, 0, 0, 0).join(), 'unk,unk,unk,unk');

@@ -493,6 +493,11 @@ def main(argv=None):
         for k in (("touch", "bridge") if board.get("kind") == "bridge" else ("flash", "ram", "dfu")):
             if k not in board:
                 raise Fail(f"flasher.json's board needs {k}")
+        # A bridge board carries its erase units in the manifest too, so the page can split a .hex or .elf from
+        # a computer into blocks (the drag-and-drop update) exactly as this script splits the ELF.
+        if board.get("kind") == "bridge" and cfg.get("units"):
+            unit_map(cfg["units"])   # validates it
+            board = dict(board, units=cfg["units"])
 
     if a.board_only and board_ref:
         raise Fail("--board-only publishes a board's details, and this flasher.json only names its board")
