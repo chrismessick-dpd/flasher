@@ -21,15 +21,19 @@
   };
 
   function html(m) {
-    var h = '<div class="fl-route"><div class="fl-route-row"><span class="fl-chain">';
+    // The note on top, then the chain and the block map, each the panel's full width, and the legend
+    // centered under them (Chris, 2026-11-17).
+    var h = '<div class="fl-route">' + (m.note ? '<div class="fl-route-note">' + esc(m.note) + '</div>' : '') + '<div class="fl-chain">';
     m.nodes.forEach(function (n, i) {
       if (i) h += '<span class="via' + (m.links[i - 1] ? ' on' : '') + '"></span>';
-      h += '<span class="hop' + (n.on ? ' on' : '') + '"><span class="hop-name">' + (IC[n.icon] || IC.board) + esc(n.name) + '</span>' +
+      h += '<span class="hop' + (n.on ? ' on' : '') + '"><span class="hop-name">' + (IC[n.icon] || IC.board) + '<span class="hop-text">' + esc(n.name) + '</span></span>' +
         '<span class="hop-status' + (n.live ? ' live' : '') + (n.good ? ' good' : '') + '">' + esc(n.status) + '</span></span>';
     });
-    h += '</span>' + (m.note ? '<span class="fl-route-note">' + esc(m.note) + '</span>' : '') + '</div>';
+    h += '</div>';
     if (m.cells && m.cells.length) {
-      h += '<div class="fl-blocks" role="img" aria-label="' + esc(m.cellsLabel || 'The image, block by block') + '">' +
+      // One row of segments across the panel; a long image wraps into rows of at most 96.
+      var n = m.cells.length, cols = Math.min(n, 96), gap = n > 96 ? 1 : n > 48 ? 2 : 3;
+      h += '<div class="fl-blocks" role="img" aria-label="' + esc(m.cellsLabel || 'The image, block by block') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr));gap:' + gap + 'px">' +
         m.cells.map(function (s) { return '<i class="fl-blk ' + s + '"></i>'; }).join('') + '</div>';
       if (m.legend) h += '<div class="fl-legend"><b class="fl-legend-label">' + esc(m.legendLabel || 'Flash block status:') + '</b>' + m.legend.map(function (l) { return '<span><i class="fl-blk ' + l[0] + '"></i>' + esc(l[1]) + '</span>'; }).join('') + '</div>';
     }
