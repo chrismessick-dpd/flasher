@@ -138,7 +138,7 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   `?demo`: `?release=fdemo3/r3-1` opened and flashed; the display's 1.4.0 put on a new system and written (4 of 24
   blocks); a remote naming another board stopped before any write. Not tried signed in against real repos.
 - **Working and Released projects, saved from the page (2026-11-17, Chris: agreed `docs/working-projects.md`, then
-  "go"; built, not committed).** README *Working and Released projects*; the doc's Status lists the code and where
+  "go"; pushed `c9cd2e0`).** README *Working and Released projects*; the doc's Status lists the code and where
   the build differs. Projects stay in their repos; FTEs rename images and move them between projects (a move to
   another repo takes the board), make projects (kept in the browser until Save, or Discard), save systems,
   upload images, define boards, and delete. Every write is `FL.access.edit`: one commit on the head it read
