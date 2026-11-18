@@ -299,7 +299,7 @@
   // tab shows its tool before a probe is connected. The firmware is picked in the sidebar.
   function homeHtml() {
     var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Serial bootloader</div>' +
-      '<h1 class="page-title">Flash a board</h1><div class="page-sub">Pick the firmware, plug the board in by USB, and flash it from Chrome or Edge. No Arduino IDE needed.</div></div></div>';
+      '<h1 class="page-title">Flash a board</h1><div class="page-sub">Pick the firmware, plug the board in by USB, and flash it from Chrome or Edge. Everything runs in the browser, with no IDE or programming software to install.</div></div></div>';
     h += browserNote();
     var c = S.catalog;
     if (S.loading) h += '<div class="hint"><b>Loading</b>Reading the firmware list from ' + esc(DEMO ? 'the demo' : FL.config.owner + '/' + FL.config.repo) + '…</div>';
