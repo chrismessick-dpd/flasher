@@ -260,9 +260,51 @@
 
   /* Validate a parsed manifest: { boards: {id: board}, firmware: [entry], problems: [text] }.
      A firmware entry whose board is unknown, or whose path isn't firmware/<board>/<id>.bin, is dropped. */
+  /* Entries the page writes (docs/working-projects.md): a firmware's own project (it wins over its board's),
+     which fields an FTE edited (publish.py leaves those alone), images uploaded as they are (kind "file"), and
+     passthrough systems. */
+  var ID = /^[a-z0-9][a-z0-9_-]{0,63}$/, FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,119}$/, HEX64 = /^[0-9a-f]{64}$/;
+  var FORMATS = ['bin', 'hex', 'elf'];
+  function partPaths(path, n) { var out = []; for (var i = 1; i <= n; i++) out.push(path + '.' + ('00' + i).slice(-3)); return out; }
+  function cleanStored(f, path) {   // { format, size, sha256, path, parts (a count), paths } of a stored file, or a reason
+    if (!f || typeof f !== 'object') return 'no file.';
+    var parts = Math.floor(+f.parts) || 0;
+    if (FORMATS.indexOf(f.format) < 0) return 'format must be bin, hex, or elf.';
+    if (f.path !== path) return 'path must be ' + path + '.';
+    if (!HEX64.test(f.sha256 || '')) return 'sha256 must be 64 hex digits.';
+    if (!(f.size > 0)) return 'bad size.';
+    if (parts < 0 || parts > 999) return 'bad parts.';
+    return { format: f.format, size: f.size, sha256: f.sha256, path: path, parts: parts, paths: parts ? partPaths(path, parts) : [path] };
+  }
+  function cleanSystem(id, s, problems) {
+    var bad = function (why) { problems.push('System “' + id + '”: ' + why); return null; };
+    if (!ID.test(id)) return bad('bad id.');
+    if (!s || typeof s !== 'object') return bad('not an object.');
+    var host = s.host && typeof s.host === 'object' ? s.host : {}, ln = s.link && typeof s.link === 'object' ? s.link : {}, rm = s.remote && typeof s.remote === 'object' ? s.remote : {};
+    var rate = function (v, d) { var n = num(v); return n >= 300 && n <= 12000000 ? n : d; };
+    var link = { touchBaud: rate(ln.touchBaud, 2400), linkBaud: rate(ln.linkBaud, 1000000), fastBaud: rate(ln.fastBaud, 4000000), exitBaud: rate(ln.exitBaud, 1200) };
+    if (link.touchBaud === link.exitBaud || link.linkBaud === link.exitBaud || link.fastBaud === link.exitBaud) return bad('the exit rate must differ from the others.');
+    var out = { id: id, name: str(s.name, 80) || 'Passthrough system', project: ID.test(s.project || '') ? s.project : '',
+      host: { name: str(host.name, 80), usb: (Array.isArray(host.usb) ? host.usb : []).map(usb).filter(Boolean).slice(0, 8).map(function (u) { return { vid: u.vid, pid: u.pid }; }) },
+      link: link, remote: { name: str(rm.name, 80), file: null, release: null }, updated: str(s.updated, 40), by: str(s.by, 100) };
+    if (rm.file) {
+      var name = typeof rm.file.name === 'string' && FILE_NAME.test(rm.file.name) && /[.](hex|elf)$/i.test(rm.file.name) ? rm.file.name : '';
+      if (!name) return bad('the remote’s file must be a .hex or .elf.');
+      var st = cleanStored(rm.file, 'systems/' + id + '/' + name);
+      if (typeof st === 'string') return bad('the remote’s file: ' + st);
+      out.remote.file = Object.assign({ name: name }, st);
+    }
+    var r = rm.release;
+    if (r && typeof r === 'object' && /^[A-Za-z0-9_-]{1,64}$/.test(r.review || '') && /^[A-Za-z0-9_-]{1,64}$/.test(r.release || '') && HEX64.test(r.sha256 || '')) {
+      out.remote.release = { repo: str(r.repo, 140), review: r.review, release: r.release, version: str(r.version, 40), target: str(r.target, 120), sha256: r.sha256,
+        board: /^[a-z0-9][a-z0-9_-]{0,47}$/.test(r.board || '') ? r.board : '' };
+    }
+    return out;
+  }
+
   function cleanManifest(m) {
-    var problems = [], boards = {}, firmware = [];
-    if (!m || typeof m !== 'object') return { boards: boards, firmware: firmware, problems: ['manifest.json isn’t a JSON object.'] };
+    var problems = [], boards = {}, firmware = [], systems = [];
+    if (!m || typeof m !== 'object') return { boards: boards, firmware: firmware, systems: systems, problems: ['manifest.json isn’t a JSON object.'] };
     if (m.format !== 1) problems.push('manifest.json has format ' + JSON.stringify(m.format) + '; this page reads format 1.');
     Object.keys(m.boards || {}).forEach(function (id) { var b = cleanBoard(id, m.boards[id], problems); if (b) boards[id] = b; });
     (Array.isArray(m.firmware) ? m.firmware : []).forEach(function (f, i) {
@@ -270,9 +312,15 @@
       if (!f || typeof f !== 'object') return problems.push(label + ': not an object.');
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.id || '')) return problems.push(label + ': bad id.');
       if (!boards[f.board]) return problems.push(label + ': unknown board “' + str(f.board, 40) + '”.');
-      var bridged = boards[f.board].kind === 'bridge', units = null;
-      if (bridged !== (f.kind === 'units')) return problems.push(label + ': ' + (bridged ? 'a bridge board’s firmware must be kind “units”.' : 'firmware of kind “units” needs a bridge board.'));
-      if (bridged) { units = cleanUnits(f); if (typeof units === 'string') return problems.push(label + ': ' + units); }
+      var bridged = boards[f.board].kind === 'bridge', units = null, stored = null;
+      if (f.kind === 'file') {
+        // An image uploaded from the page as it is: a .bin, .hex, or .elf, maybe in parts. A bridge board's must
+        // carry addresses (.hex or .elf).
+        stored = cleanStored(f, 'firmware/' + f.board + '/' + f.id + '.' + f.format);
+        if (typeof stored === 'string') return problems.push(label + ': ' + stored);
+        if (bridged && stored.format === 'bin') return problems.push(label + ': a bridge board’s image needs addresses: a .hex or .elf.');
+      } else if (bridged !== (f.kind === 'units')) return problems.push(label + ': ' + (bridged ? 'a bridge board’s firmware must be kind “units” or “file”.' : 'firmware of kind “units” needs a bridge board.'));
+      else if (bridged) { units = cleanUnits(f); if (typeof units === 'string') return problems.push(label + ': ' + units); }
       else if (f.path !== 'firmware/' + f.board + '/' + f.id + '.bin') return problems.push(label + ': path must be firmware/' + f.board + '/' + f.id + '.bin.');
       if (!/^[0-9a-f]{64}$/.test(f.sha256 || '')) return problems.push(label + ': sha256 must be 64 hex digits.');
       if (!(f.size > 0)) return problems.push(label + ': bad size.');
@@ -282,9 +330,17 @@
         size: f.size, sha256: f.sha256, path: f.path, built: str(f.built, 40), published: str(f.published, 40),
         source: { repo: str(src.repo, 100), sha: /^[0-9a-f]{7,40}$/.test(src.sha || '') ? src.sha : '', path: str(src.path, 200), dirty: !!src.dirty }
       });
-      if (units) { var e = firmware[firmware.length - 1]; e.kind = 'units'; e.parts = units.parts; e.units = units.units; e.commit = units.commit; }
+      var e = firmware[firmware.length - 1];
+      if (units) { e.kind = 'units'; e.parts = units.parts; e.units = units.units; e.commit = units.commit; }
+      if (stored) { e.kind = 'file'; e.format = stored.format; e.paths = stored.paths; e.partCount = stored.parts; }
+      if (ID.test(f.project || '')) e.project = f.project;
+      var ed = f.edited && typeof f.edited === 'object' ? f.edited : {};
+      e.edited = { name: ed.name === true, project: ed.project === true };
+      if (str(f.uploadedBy, 100)) e.uploadedBy = str(f.uploadedBy, 100);
     });
-    return { boards: boards, firmware: firmware, problems: problems };
+    var sys = m.systems && typeof m.systems === 'object' && !Array.isArray(m.systems) ? m.systems : {};
+    Object.keys(sys).forEach(function (id) { var x = cleanSystem(id, sys[id], problems); if (x) systems.push(x); });
+    return { boards: boards, firmware: firmware, systems: systems, problems: problems };
   }
 
   /* A board for a local .bin when no catalog board fits: any STM32 in its ROM DFU bootloader.
@@ -296,5 +352,5 @@
     notes: 'No checks beyond “is this firmware”: the flash size comes from the board once it’s connected. Flasher tries a 1200-baud restart on the serial port picked; without an answer, the board goes into update mode by hand.'
   }, []);
 
-  FL.image = { unitLayout: unitLayout, layoutFromInfo: layoutFromInfo, layoutUnits: layoutUnits, unitsImage: unitsImage, check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
+  FL.image = { cleanSystem: cleanSystem, partPaths: partPaths, FORMATS: FORMATS, unitLayout: unitLayout, layoutFromInfo: layoutFromInfo, layoutUnits: layoutUnits, unitsImage: unitsImage, check: check, sha256: sha256, cleanManifest: cleanManifest, cleanBoard: cleanBoard, GENERIC: GENERIC, num: num, hex: hex, fmtBytes: fmtBytes, u32: u32 };
 })(window.FL = window.FL || {});

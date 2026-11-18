@@ -126,6 +126,28 @@ class PlanManifest(unittest.TestCase):
 
 
 
+class PageEdits(unittest.TestCase):
+    """What Flasher's page writes (docs/working-projects.md) survives a publish."""
+
+    def test_keeps_edited_name_project_and_page_entries(self):
+        old = json.loads(P.plan_manifest(None, BOARD, [entry("blink"), entry("pulse")], NOW)[0])
+        old["firmware"][0].update(name="Renamed on the page", project="bench", edited={"name": True, "project": True})
+        old["systems"] = {"s1": {"name": "Rig", "project": "bench", "host": {}, "link": {}, "remote": {"name": "R"}}}
+        old["projects"] = {"bench": {"name": "Bench rig"}}
+        old["firmware"].append({"id": "i1", "board": "other", "kind": "file", "format": "hex", "name": "Uploaded", "size": 9, "sha256": "c" * 64, "path": "firmware/other/i1.hex"})
+        old_bytes = P.dump(old)
+        same, changed, _ = P.plan_manifest(old_bytes, BOARD, [entry("blink"), entry("pulse")], LATER)
+        self.assertEqual(changed, [], "a republish of the same build changes nothing, edits included")
+        new, changed, _ = P.plan_manifest(old_bytes, BOARD, [entry("blink", sha="b" * 64), entry("pulse")], LATER)
+        self.assertEqual(changed, ["blink"])
+        m = json.loads(new)
+        f = m["firmware"][0]
+        self.assertEqual((f["name"], f["project"], f["edited"], f["sha256"]), ("Renamed on the page", "bench", {"name": True, "project": True}, "b" * 64))
+        self.assertEqual(m["systems"], old["systems"], "systems are kept")
+        self.assertEqual(m["projects"], old["projects"])
+        self.assertTrue(any(x["id"] == "i1" for x in m["firmware"]), "page-uploaded images are kept")
+
+
 class Images(unittest.TestCase):
     """flasher.json's images: one firmware built as a whole, rather than a folder of sketches."""
 

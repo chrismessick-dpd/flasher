@@ -122,6 +122,20 @@ def dump(m):
     return (json.dumps(m, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
+def keep_page_edits(was, e):
+    """An FTE can rename an image, or put it in another project, on Flasher's page (docs/working-projects.md); the
+    page stamps those fields in `edited`. A republish keeps them, and the stamp, instead of the build's."""
+    ed = was.get("edited") or {}
+    if not isinstance(ed, dict) or not ed:
+        return e
+    e = dict(e, edited=ed)
+    if ed.get("name") and "name" in was:
+        e["name"] = was["name"]
+    if ed.get("project") and "project" in was:
+        e["project"] = was["project"]
+    return e
+
+
 def plan_manifest(old_bytes, board, entries, now, project=None):
     """The new manifest and which entries changed. old_bytes is None for a repo without one.
     project: (id, name) to record in the manifest's projects map, or None.
@@ -150,7 +164,8 @@ def plan_manifest(old_bytes, board, entries, now, project=None):
         i = next((k for k, f in enumerate(new["firmware"]) if f.get("id") == e["id"] and f.get("board") == bid), None)
         if i is not None:
             was = new["firmware"][i]
-            same = all(was.get(k) == e.get(k) for k in ("sha256", "size", "name", "summary", "description", "source", "path", "kind", "parts", "commit"))
+            e = keep_page_edits(was, e)
+            same = all(was.get(k) == e.get(k) for k in ("sha256", "size", "name", "summary", "description", "source", "path", "kind", "parts", "commit", "project", "edited"))
             if same:
                 continue
             new["firmware"][i] = dict(e, published=now)

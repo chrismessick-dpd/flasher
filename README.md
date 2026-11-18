@@ -245,6 +245,27 @@ users.json            flasher_data only: the People list
 - Numbers may be JSON numbers or `"0x…"` strings.
 - Entries that don't validate are skipped and listed on the page (`FL.image.cleanManifest`).
 
+## Working and Released projects
+
+The sidebar (2026-11-17, Chris; design: `docs/working-projects.md`) has two parts under *A file from this computer*:
+
+- **Working projects:** Flasher's own, from the manifests (`flasher_data` and the shared `review-flasher-*`
+  repos), each with its images and saved passthrough systems. A project made here (*+ New project*, FTEs) stays
+  in this browser, marked *Not saved*, until Save; Discard drops it. A saved one has Delete (its entries and
+  files go; git history keeps them; a shared project must be unshared first). *Unsorted* holds systems made
+  outside a project. The › beside a project opens its page: rename, images (*Upload an image…*: a `.bin`,
+  `.hex`, or `.elf` stored as it is), boards (*Define a board…*), systems (*New passthrough system*).
+- **Released projects:** Signoff FW's targets by their FW project, each target's releases under it (below).
+- **An image's Name and Project** sit in its About card's header for FTEs, with Save and Discard. An image can
+  move to another project in its repo on its own; moving it to a project in another repo moves its board, with
+  all the board's images.
+- **Systems** have Save (asking which project when they have none), and once saved, Discard changes and Delete.
+- **Every save** reads the head and `manifest.json`, changes only the entries it names (checked: the manifest
+  with them put back is the old one, byte for byte), and commits on that head (`putFiles { head }`), reading
+  again and re-applying when someone else saved first. The new manifest entries are `systems`, firmware
+  `kind: "file"` (`format`, `parts`), a firmware's own `project`, and `edited`, which `publish.py` respects:
+  a republish never changes a name or project an FTE edited.
+
 ## Releases from Signoff FW
 
 A second firmware source beside the manifest (2026-11-17, Chris; the design is

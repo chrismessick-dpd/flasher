@@ -550,7 +550,10 @@
      big ones one by one, each retried when cut off); the commit then uses
      force:false and is retried on a non-fast-forward, like sync. Split a file over
      PART_BYTES with GitHubStore.splitParts first, or it may never get through.
-     Resolves { pushed, skipped, commitUrl }. */
+     opts.head: commit only on that commit (the head the caller read its files from), never retry; a repo
+     that moved on rejects with err.code 'moved', so the caller re-reads and re-applies its edit (Flasher's
+     manifest edits). Resolves { pushed, skipped, commitUrl, head } (head: the new commit's sha). */
+  function moved() { var e = new Error('Someone else changed the repository since it was read.'); e.code = 'moved'; return e; }
   GitHubStore.prototype.putFiles = function (files, opts) {
     var self = this, attempt = 0, uploaded = {};
     opts = opts || {};
@@ -562,11 +565,12 @@
     })).then(function once() {
       attempt++;
       return self.snapshot().then(function (snap) {
+        if (opts.head && snap.head !== opts.head) throw moved();
         var have = {};
         snap.entries.forEach(function (e) { if (e.type === 'blob') have[e.path] = e.sha; });
         var changes = items.filter(function (it) { return it.remove ? !!have[it.path] : have[it.path] !== it.sha; });
         var skipped = items.length - changes.length;
-        if (!changes.length) return { pushed: 0, skipped: skipped };
+        if (!changes.length) return { pushed: 0, skipped: skipped, head: snap.head };
         var toUpload = changes.filter(function (it) { return !it.remove && !uploaded[it.sha]; });
         var small = toUpload.filter(function (it) { return it.bytes.length < BIG_BLOB; });
         var big = toUpload.filter(function (it) { return it.bytes.length >= BIG_BLOB; });
@@ -602,10 +606,11 @@
             return it.remove ? { path: it.path, remove: true } : { path: it.path, blobSha: it.sha };
           }), opts.message || 'Signoff: update files');
         }).then(function (commit) {
-          return { pushed: changes.length, skipped: skipped, commitUrl: commit.html_url };
+          return { pushed: changes.length, skipped: skipped, commitUrl: commit.html_url, head: commit.sha };
         });
       }).catch(function (err) {
-        if ((err.status === 422 || err.status === 409) && attempt < MAX_ATTEMPTS) {
+        if (opts.head && (err.status === 422 || err.status === 409)) throw moved();
+        if ((err.status === 422 || err.status === 409) && attempt < MAX_ATTEMPTS && !opts.head) {
           if (opts.onRetry) opts.onRetry(attempt);
           return once();
         }

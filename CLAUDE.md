@@ -130,13 +130,22 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   passthrough systems*.
 
 - **Releases from Signoff FW (2026-11-17, Chris: design agreed in `../fw_design_review/docs/releases.md`, then
-  "go"; built after slice 1, not committed).** README *Releases from Signoff FW*. `assets/fwreleases.js` (`FL.fwr`:
+  "go"; pushed `c629194`).** README *Releases from Signoff FW*. `assets/fwreleases.js` (`FL.fwr`:
   `load`, `fetchRelease`, `loadDemo`, `makeElf`); in `app.js`, *Signoff FW releases* (`loadFwr`, `fwrRows`,
   `releaseHtml`, `openRelease`, `openLocalBytes`, `releaseToSystem`, `setSystemBytes`, `remoteReleaseField`,
   `remoteReleaseNote`, and `wantBoard` checked in the system's `split`). FW sharing governs; drafts for FTEs only.
   Tests 77 (4 new, against `tests/fakegithub.js` with files written by the engine's `model.releaseFiles`). Tried in
   `?demo`: `?release=fdemo3/r3-1` opened and flashed; the display's 1.4.0 put on a new system and written (4 of 24
   blocks); a remote naming another board stopped before any write. Not tried signed in against real repos.
+- **Working and Released projects, saved from the page (2026-11-17, Chris: agreed `docs/working-projects.md`, then
+  "go"; built, not committed).** README *Working and Released projects*; the doc's Status lists the code and where
+  the build differs. Projects stay in their repos; FTEs rename images and move them between projects (a move to
+  another repo takes the board), make projects (kept in the browser until Save, or Discard), save systems,
+  upload images, define boards, and delete. Every write is `FL.access.edit`: one commit on the head it read
+  (`putFiles { head }`, an engine change), only the named entries changed, re-applied when the repo moved, read
+  back. `publish.py` keeps page edits (`keep_page_edits`). Tests: 83 browser (6 new), 25 Python. Tried in `?demo`:
+  rename, a new project with a system saved, a saved system edited and saved, a board defined, a `.hex` uploaded
+  and opened for flashing, and a project deleted. Not tried signed in: no real manifest has been written yet.
 
 ## Rules
 

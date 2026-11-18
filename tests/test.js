@@ -924,6 +924,97 @@
     ok(FL.files.parse(g.name, g.bytes).segments.length > 1, 'the display build is the .hex a system’s remote takes');
   });
 
+  // ── Working projects: manifests edited from the page (docs/working-projects.md) ──
+  function wpCtx(w, who) { return { token: who, fetch: w.gh.fetch }; }
+  function wpRaw(w, repo) { return JSON.parse(w.gh.text(repo || FL.config.repo, 'manifest.json')); }
+  test('Working projects: a name and project edit changes only that entry, stamped for publish.py', async function () {
+    var w = await world(), before = w.gh.text(FL.config.repo, 'manifest.json');
+    var res = await AC.editFirmware(wpCtx(w, 'chris'), AC.dataFull(), 'fw-b2', 'b2', { name: 'Display build', project: 'alpha' });
+    var raw = wpRaw(w), f = raw.firmware.filter(function (x) { return x.id === 'fw-b2'; })[0];
+    eq(f.name, 'Display build'); eq(f.project, 'alpha'); ok(f.edited.name && f.edited.project, 'both fields are stamped as edited');
+    var old = JSON.parse(before), undone = AC.onlyTouched(old, raw, { firmware: ['fw-b2@b2'] });
+    eq(AC.dump(undone), AC.dump(raw), 'the manifest differs from the old one only in that entry (and updated)');
+    ok(res.head, 'the edit says the new head');
+    var c = await FL.catalog.loadRepo('chris', w.gh.fetch);
+    eq(c.firmware.filter(function (x) { return x.id === 'fw-b2'; })[0].project, 'alpha', 'the catalog puts the image in its own project');
+    eq(c.firmware.filter(function (x) { return x.id === 'fw-b1'; })[0].project, 'beta', 'its board’s other image stays in the board’s project');
+    await AC.editFirmware(wpCtx(w, 'chris'), AC.dataFull(), 'fw-b2', 'b2', { project: 'beta' });
+    ok(!('project' in wpRaw(w).firmware.filter(function (x) { return x.id === 'fw-b2'; })[0]), 'moving it back to its board’s project drops its own project');
+  });
+  test('Working projects: an edit that changes more than it names is refused, and nothing is written', async function () {
+    var w = await world(), before = w.gh.text(FL.config.repo, 'manifest.json');
+    await rejects(AC.edit(wpCtx(w, 'chris'), AC.dataFull(), function (raw) {
+      raw.firmware[0].name = 'sneaky'; raw.projects.alpha.name = 'Renamed';
+      return { touched: { projects: ['alpha'] } };
+    }), /touched more/, 'an undeclared change');
+    eq(w.gh.text(FL.config.repo, 'manifest.json'), before, 'manifest.json is as it was');
+  });
+  test('Working projects: when the repo moves on mid-edit, the edit is read again and re-applied', async function () {
+    var calls = 0;
+    var w2 = await world(), raced = false;
+    var res2 = await AC.edit(wpCtx(w2, 'chris'), AC.dataFull(), function (raw, at) {
+      calls++;
+      raw.projects.alpha = { name: 'Alpha 2' };
+      if (!raced) { raced = true; w2.race = AC.saveProject(wpCtx(w2, 'chris'), AC.dataFull(), 'gamma', 'Gamma'); }
+      return { touched: { projects: ['alpha'] } };
+    }, { onRetry: function () {} }).catch(function (e) { return e; });
+    await w2.race;
+    var raw = wpRaw(w2);
+    ok(raw.projects.gamma && raw.projects.gamma.name === 'Gamma', 'the other save is kept');
+    eq(raw.projects.alpha.name, 'Alpha 2', 'this edit landed too');
+    ok(calls >= 1, 'the change ran ' + calls + ' time(s)');
+  });
+  test('Working projects: a new project, a board, an image in parts, and a system with its file', async function () {
+    var w = await world(), ctx = wpCtx(w, 'chris'), G = Signoff.GitHubStore;
+    await AC.saveProject(ctx, AC.dataFull(), 'wbench', 'Bench rig');
+    await AC.saveBoard(ctx, AC.dataFull(), 'wbench-main', { name: 'Bench main', project: 'wbench', flash: { base: '0x08000000', size: '0x80000' }, ram: { base: '0x20000000', size: '0x1C000' }, dfu: { vid: '0x0483', pid: '0xDF11' } });
+    await rejects(AC.saveBoard(ctx, AC.dataFull(), 'bad-board', { name: 'No flash' }), /flash/, 'a board without flash');
+    var big = image(4096, 8), elf = FL.fwr.makeElf(0x08000000, big);
+    var up = await AC.uploadImage(ctx, AC.dataFull(), { name: 'bench.elf', title: 'Bench build', board: 'wbench-main', project: 'wbench', bytes: elf, by: 'chris' });
+    var hexText = FL.files.toHex([{ addr: 0x08010000, data: image(2048, 4) }]), hexBytes = new TextEncoder().encode(hexText);
+    var sys = { id: 'wsys1', name: 'Display through main', project: 'wbench', host: { name: 'Main', usb: [{ vid: 0x0483, pid: 0x5740 }] }, link: { touchBaud: 2400, linkBaud: 1000000, fastBaud: 4000000, exitBaud: 1200 }, remote: { name: 'Display' } };
+    await AC.saveSystem(ctx, AC.dataFull(), sys, { name: 'disp.hex', bytes: hexBytes });
+    var c = await FL.catalog.loadRepo('chris', w.gh.fetch);
+    eq(c.projects.wbench.name, 'Bench rig', 'the new project is listed by its name');
+    var img = c.firmware.filter(function (f) { return f.id === up.id; })[0];
+    ok(img && img.kind === 'file' && img.format === 'elf' && img.project === 'wbench', 'the image is a stored .elf in the project');
+    eq(await I.sha256(await c.fetch(img)), await I.sha256(elf), 'the image reads back whole');
+    var s = c.systems.filter(function (x) { return x.id === 'wsys1'; })[0];
+    ok(s && s.project === 'wbench' && s.remote.file && s.remote.file.name === 'disp.hex' && s.host.usb[0].vid === 0x0483, 'the system is saved with its host and its remote’s file');
+    eq(new TextDecoder().decode(await c.fetchSystemFile(s)), hexText, 'the system’s file reads back whole');
+    // A bigger image goes up in parts and is joined on the way back.
+    var huge = new Uint8Array(G.PART_BYTES + 777); for (var i = 0; i < huge.length; i += 991) huge[i] = i & 255;
+    var up2 = await AC.uploadImage(ctx, AC.dataFull(), { name: 'huge.bin', board: 'wbench-main', bytes: huge });
+    var c2 = await FL.catalog.loadRepo('chris', w.gh.fetch), img2 = c2.firmware.filter(function (f) { return f.id === up2.id; })[0];
+    eq(img2.paths.length, 2, 'stored in two parts');
+    eq((await c2.fetch(img2)).length, huge.length, 'joined on the way back');
+  });
+  test('Working projects: deleting a project removes its entries and files; shares carry systems', async function () {
+    var w = await world(), ctx = wpCtx(w, 'chris');
+    await AC.saveProject(ctx, AC.dataFull(), 'wbench', 'Bench rig');
+    await AC.saveSystem(ctx, AC.dataFull(), { id: 'wsys1', name: 'S', project: 'alpha', host: {}, link: {}, remote: { name: 'R' } }, { name: 'r.hex', bytes: new TextEncoder().encode(':00000001FF\n') });
+    await AC.saveSystem(ctx, AC.dataFull(), { id: 'wsys2', name: 'T', project: 'wbench', host: {}, link: {}, remote: { name: 'R' } }, { name: 'r.hex', bytes: new TextEncoder().encode(':00000001FF\n') });
+    await AC.removeEntries(ctx, AC.dataFull(), { project: 'wbench', label: 'Bench rig' });
+    var raw = wpRaw(w), files = w.gh.files(FL.config.repo);
+    ok(!raw.projects.wbench && !raw.systems.wsys2 && !files['systems/wsys2/r.hex'], 'the project, its system, and its file are gone');
+    ok(raw.systems.wsys1 && files['systems/wsys1/r.hex'], 'another project’s system stays');
+    var loaded = await AC.load(as(w, 'chris'));
+    var res = await AC.share(as(w, 'chris'), loaded.roster, 'alpha');
+    var dst = w.gh.files(res.repo.split('/')[1]);
+    ok(dst['systems/wsys1/r.hex'] && JSON.parse(new TextDecoder().decode(dst['manifest.json'])).systems.wsys1, 'sharing a project moves its systems and their files');
+    ok(!w.gh.files(FL.config.repo)['systems/wsys1/r.hex'], '…and removes them from flasher_data');
+  });
+  test('Working projects: a board and its images move to a project in another repo', async function () {
+    var w = await world(), ctx = wpCtx(w, 'chris');
+    var loaded = await AC.load(as(w, 'chris'));
+    var res = await AC.share(as(w, 'chris'), loaded.roster, 'beta');
+    var to = res.repo;
+    await AC.moveBoard(ctx, AC.dataFull(), to, 'a1', 'beta');
+    var dstRaw = JSON.parse(w.gh.text(to.split('/')[1], 'manifest.json')), srcRaw = wpRaw(w);
+    ok(dstRaw.boards.a1 && dstRaw.boards.a1.project === 'beta' && dstRaw.firmware.some(function (f) { return f.board === 'a1'; }), 'the board and its image are in the shared repo, in the project');
+    ok(!srcRaw.boards.a1 && !srcRaw.firmware.some(function (f) { return f.board === 'a1'; }) && !w.gh.files(FL.config.repo)['firmware/a1/fw-a1.bin'], '…and gone from flasher_data, files too');
+  });
+
   // ── Run ──
   var out = document.getElementById('out'), failed = 0;
   tests.reduce(function (p, t) {

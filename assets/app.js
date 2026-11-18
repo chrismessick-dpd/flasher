@@ -49,7 +49,8 @@
     con: null,                         // { open, connecting, error, name, paused }
     conBaud: 115200, conFilter: '',    // the console's rate, and which board's ports to list ('' = any)
     fwr: null,                         // Signoff FW releases (assets/fwreleases.js): { state, targets, errors, fte, error }
-    relKey: '', rel: null              // view 'release': '<review id>/<release id>', and its fetch { busy, error }
+    relKey: '', rel: null,             // view 'release': '<review id>/<release id>', and its fetch { busy, error }
+    projKey: '', fwEdit: null, writing: ''   // view 'project' (docs/working-projects.md); an image's Name and Project edits; a save under way
   };
   var demoBoard = { running: true };   // the simulated board's state in ?demo
 
@@ -57,6 +58,7 @@
   function current() {
     if (S.view === 'fw' && S.catalog) {
       var f = S.catalog.firmware.filter(function (x) { return x.id + '@' + x.board === S.fwId; })[0];
+      if (f && f.kind === 'file' && boards()[f.board].kind === 'bridge') return { fw: fileImageFw(f), board: boards()[f.board] };
       return f ? { fw: f, board: boards()[f.board] } : null;
     }
     if (S.view === 'system' && S.sys) return { fw: systemFw(), board: systemBoard(S.sys.sys) };
@@ -66,6 +68,21 @@
       return { fw: { id: 'local', name: S.local.name, size: S.local.bytes.length, sha256: S.local.sha256, local: true }, board: b };
     }
     return null;
+  }
+
+  // An image uploaded on the page (kind "file") for a board behind a passthrough: read once, then split after INFO,
+  // as a system's file is.
+  var fileImgs = {};
+  function fileImageFw(f) {
+    var k = f.id + '@' + f.board, st = fileImgs[k];
+    if (!st) {
+      fileImgs[k] = st = { loading: true };
+      S.catalog.fetch(f).then(function (bytes) { fileImgs[k] = { segments: FL.files.parse(f.path, bytes).segments }; render(); },
+        function (e) { fileImgs[k] = { error: e.code === 'mismatch' ? 'The image in the repo doesn’t match its recorded SHA-256.' : e.message || String(e) }; render(); });
+    }
+    var fw = Object.assign({}, f, { split: true, local: true, kind: 'units', units: [], parts: [], segments: st.segments || null });
+    if (st.loading) fw.error = 'Reading ' + f.name + '…'; else if (st.error) fw.error = st.error;
+    return fw;
   }
 
   // A file from this computer for a board reached through a passthrough: its .hex or .elf split into that board's
@@ -104,7 +121,16 @@
 
   function load() {
     S.error = ''; S.syncError = '';
-    if (DEMO) { S.loading = true; render(); return C.loadDemo().then(function (c) { done(c); return loadFwr(c); }, fail); }
+    if (DEMO) {
+      S.loading = true; render();
+      return C.loadDemo().then(function (c) {
+        var f0 = c.fetch; c.fetch = function (f) { return demoFiles[f.id] ? Promise.resolve(demoFiles[f.id].slice()) : f0(f); };
+        c.systems = c.systems || [];
+        c.firmware.forEach(function (f) { f.project = f.project || (c.boards[f.board] && c.boards[f.board].project); f.edited = f.edited || {}; });
+        c.fetchSystemFile = function (x) { return idbFile('get', x.id).then(function (rec) { if (!rec) throw new Error('not in this browser'); return new Uint8Array(rec.bytes); }); };
+        done(c); return loadFwr(c);
+      }, fail);
+    }
     var tok = C.auth.token();
     if (!tok) { S.catalog = null; S.fwr = null; S.loading = false; S.syncing = false; render(); return Promise.resolve(); }
     loadFwr(null);   // Signoff FW's releases: their own repos and access, read beside the manifest
@@ -198,23 +224,35 @@
       openLocalBytes(f.name, f.bytes, f.sha256, boards()[f.load.board] ? f.load.board : '', { key: key, target: x.target.name, version: x.rel.version, state: x.rel.state, withdrawnWhy: x.rel.withdrawnWhy || '', base: f.load.base });
     }, function (e) { if (S.relKey === key) { S.rel = { busy: false, error: e.message || String(e) }; render(); } });
   }
+  // Released projects: Signoff FW's targets, grouped by their project (the FW review's meta.project), each target's
+  // releases under it, newest first. Read only here: they're edited in Signoff FW.
   function fwrRows() {
-    var f = S.fwr;
+    var f = S.fwr, head = '<div class="fl-sec"><span class="side-label">Released projects</span><span class="fl-muted fl-sec-note">Signoff FW</span></div>';
     if (!f || (f.state === 'ok' && !f.targets.length)) return '';
-    if (f.state === 'loading') return '<div class="side-empty">Reading Signoff FW releases…</div>';
-    if (f.state === 'error') return '<div class="side-empty">Couldn’t read Signoff FW releases: ' + esc(f.error) + '</div>';
+    if (f.state === 'loading') return head + '<div class="side-empty">Reading Signoff FW releases…</div>';
+    if (f.state === 'error') return head + '<div class="side-empty">Couldn’t read Signoff FW releases: ' + esc(f.error) + '</div>';
     var q = ($('#fw-search').value || '').trim().toLowerCase(), closed = closedGroups(), curKey = S.view === 'release' ? S.relKey : S.view === 'local' && S.local && S.local.release ? S.local.release.key : '';
-    return f.targets.map(function (t) {
-      var list = t.releases.filter(relShown).filter(function (r) { return !q || (t.name + ' ' + r.version).toLowerCase().indexOf(q) >= 0; }).slice().reverse();
-      if (!list.length) return '';
-      var gid = 'fwr:' + t.id, holds = list.some(function (r) { return curKey === t.id + '/' + r.id; }), open = !closed[gid] || !!q || holds;
-      return '<div class="side-group"><button class="side-group-head" data-act="toggle-group" data-group="' + esc(gid) + '" aria-expanded="' + open + '">' +
-        '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-        '<span class="side-group-name" title="Releases from Signoff FW">' + esc(t.name) + ' <span class="fl-muted">· Signoff FW</span></span><span class="side-group-count">' + list.length + '</span></button>' +
-        (open ? list.map(function (r) {
-          var key = t.id + '/' + r.id, sub = [FL.fwr.LABEL[r.state], r.via === 'passthrough' ? 'through a passthrough' : r.kind.toUpperCase(), I.fmtBytes(r.size)].join(' · ');
-          return '<button class="proj fl-rel-row ' + r.state + (curKey === key ? ' active' : '') + '" data-act="open-rel" data-rel="' + esc(key) + '" title="' + esc(t.name + ' ' + r.version + (r.withdrawnWhy ? ': withdrawn, ' + r.withdrawnWhy : '')) + '">' + FW_ICON +
-            '<span class="proj-body"><span class="proj-name">' + esc(r.version) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+    var groups = {}, order = [];
+    f.targets.forEach(function (t) {
+      var list = t.releases.filter(relShown).filter(function (r) { return !q || (t.project + ' ' + t.name + ' ' + r.version).toLowerCase().indexOf(q) >= 0; }).slice().reverse();
+      if (!list.length) return;
+      var pname = t.project || 'No project';
+      if (!groups[pname]) { groups[pname] = []; order.push(pname); }
+      groups[pname].push({ t: t, list: list });
+    });
+    if (!order.length) return q ? '' : head;
+    return head + order.sort().map(function (pname) {
+      var gid = 'fwp:' + pname, items = groups[pname], n = items.reduce(function (a, x) { return a + x.list.length; }, 0);
+      var holds = items.some(function (x) { return x.list.some(function (r) { return curKey === x.t.id + '/' + r.id; }); }), open = !closed[gid] || !!q || holds;
+      return '<div class="side-group"><button class="side-group-head" data-act="toggle-group" data-group="' + esc(gid) + '" aria-expanded="' + open + '">' + CHEV +
+        '<span class="side-group-name" title="A project in Signoff FW">' + esc(pname) + '</span><span class="side-group-count">' + n + '</span></button>' +
+        (open ? items.map(function (x) {
+          var t = x.t;
+          return '<div class="fl-target">' + esc(t.name) + '</div>' + x.list.map(function (r) {
+            var key = t.id + '/' + r.id, sub = [FL.fwr.LABEL[r.state], r.via === 'passthrough' ? 'through a passthrough' : r.kind.toUpperCase(), I.fmtBytes(r.size)].join(' · ');
+            return '<button class="proj fl-rel-row ' + r.state + (curKey === key ? ' active' : '') + '" data-act="open-rel" data-rel="' + esc(key) + '" title="' + esc(t.name + ' ' + r.version + (r.withdrawnWhy ? ': withdrawn, ' + r.withdrawnWhy : '')) + '">' + FW_ICON +
+              '<span class="proj-body"><span class="proj-name">' + esc(r.version) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+          }).join('');
         }).join('') : '') + '</div>';
     }).join('');
   }
@@ -281,7 +319,8 @@
     renderTabs();
     if (S.loading && linked) return;   // keep ?fw= in the address until the list is here
     if (S.view === 'release' && !relOf(S.relKey) && !(S.fwr && S.fwr.state === 'loading')) S.view = 'home';
-    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : S.view === 'system' ? systemHtml(current()) : S.view === 'release' ? releaseHtml() : fwHtml(current());
+    if (S.view === 'project' && !projectByKey(S.projKey) && !S.loading) S.view = 'home';
+    v.innerHTML = S.view === 'home' ? homeHtml() : S.view === 'people' ? peopleHtml() : S.view === 'system' ? systemHtml(current()) : S.view === 'release' ? releaseHtml() : S.view === 'project' ? projectHtml() : fwHtml(current());
     if (S.tab === 'console') renderConsole();
     // The probe draws itself; it's redrawn here only when its tab opens, so a sync or a fetch finishing
     // never wipes what's typed in its fields.
@@ -329,38 +368,15 @@
   var FW_ICON = '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="12" height="12" rx="2.2"/><path d="M11 6.6 8.4 10.3h3.3L9.2 13.6"/></svg></span>';
   function renderSide() {
     var list = $('#fw-list'), h = '', q = ($('#fw-search').value || '').trim().toLowerCase();
-    if (S.catalog) {
-      var bs = boards(), pj = S.catalog.projects || {}, closed = closedGroups(), groups = {};
-      S.catalog.firmware.forEach(function (f) {
-        var b = bs[f.board], pid = (b && b.project) || f.board, pname = (pj[pid] && pj[pid].name) || (b && b.name) || pid;
-        if (q && [f.name, f.summary, b && b.name, pname].join(' ').toLowerCase().indexOf(q) < 0) return;
-        (groups[pid] = groups[pid] || { name: pname, list: [], boards: {} }).list.push(f);
-        groups[pid].boards[f.board] = 1;
-      });
-      h = Object.keys(groups).sort(function (a, b) { return groups[a].name.localeCompare(groups[b].name); }).map(function (pid) {
-        var g = groups[pid], many = Object.keys(g.boards).length > 1;
-        var holds = g.list.some(function (f) { return S.view === 'fw' && S.fwId === f.id + '@' + f.board; });
-        var open = !closed[pid] || !!q || holds;
-        g.list.sort(function (x, y) { return (bs[x.board].name + x.name).localeCompare(bs[y.board].name + y.name); });
-        return '<div class="side-group"><button class="side-group-head" data-act="toggle-group" data-group="' + esc(pid) + '" aria-expanded="' + open + '">' +
-          '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-          '<span class="side-group-name">' + esc(g.name) + '</span><span class="side-group-count">' + g.list.length + '</span></button>' +
-          (open ? g.list.map(function (f) {
-            var key = f.id + '@' + f.board, on = S.view === 'fw' && S.fwId === key;
-            var sub = [many ? bs[f.board].name : '', I.fmtBytes(f.size), f.built ? fmtDate(f.built) : ''].filter(Boolean).join(' · ');
-            return '<button class="proj' + (on ? ' active' : '') + '" data-act="open-fw" data-fw="' + esc(key) + '" title="' + esc(f.summary || f.name) + '">' + FW_ICON +
-              '<span class="proj-body"><span class="proj-name">' + esc(f.name) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
-          }).join('') : '') + '</div>';
-      }).join('');
-      if (!h) h = '<div class="side-empty">' + (q ? 'No matching firmware.' : 'No firmware yet.') + '</div>';
-    } else if (S.loading) h = '<div class="side-empty">Loading firmware…</div>';
+    if (S.catalog || readDrafts().length || (systemsOn() && readSystems().length)) h = workingRows(q);
+    else if (S.loading) h = '<div class="side-empty">Loading firmware…</div>';
     else if (!DEMO && !C.auth.token()) h = '<div class="side-empty">Projects’ firmware is private: <a href="#" data-act="account">sign in</a> to see what’s shared with you. A file, the probe, and the console work without it.</div>';
     // A file from this computer, always first: it works signed out.
     var fileRow = '<button class="proj fl-file-row' + (S.view === 'local' ? ' active' : '') + '" data-act="' + (S.local ? 'open-local' : 'open-file') + '" title="Flash a .bin file from this computer">' +
       '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
       '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
       esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, .hex, or .elf; or drop it here') + '</span></span></button>';
-    list.innerHTML = fileRow + systemRows() + h + fwrRows();
+    list.innerHTML = fileRow + h + fwrRows();
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
   }
@@ -509,12 +525,13 @@
         '<p class="note">' + (b.kind === 'bridge' ? 'Flasher splits the file into ' + esc(b.name) + '’s blocks, compares each with the board, and writes only the ones that differ.'
           : 'The board decides the checks (flash size, RAM) and how it’s put in update mode.') + (S.catalog ? '' : ' Sign in to choose one of Dovetail’s boards.') + '</p>' +
         '<div class="fl-row"><button class="btn" data-act="open-file">Open another file…</button></div></div>';
-    } else if (fw.description) {
-      // Collapsible; the choice is kept for this browser (flasher.v1.about).
+    } else if (fw.description || canEdit()) {
+      // Collapsible; the choice is kept for this browser (flasher.v1.about). FTEs edit the name and project in its
+      // header (docs/working-projects.md); the fields stop the click so the card doesn't fold.
       h += '<details class="card fl-about" data-toggle="about"' + (aboutOpen() ? ' open' : '') + '><summary><span class="fl-about-title">About this firmware</span>' +
-        '<span class="fl-about-sum">' + esc(fw.summary || '') + '</span>' +
+        (canEdit() ? fwEditHtml(fw) : '<span class="fl-about-sum">' + esc(fw.summary || '') + '</span>') +
         '<svg class="fl-chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>' +
-        '<div class="fl-desc">' + esc(fw.description) + '</div></details>';
+        '<div class="fl-desc">' + (canEdit() && fw.summary ? '<p><b>' + esc(fw.summary) + '</b></p>' : '') + esc(fw.description || (fw.uploadedBy ? 'Uploaded by ' + fw.uploadedBy + (fw.published ? ', ' + fmtDate(fw.published) : '') + '.' : '')) + '</div></details>';
     }
     // One panel: the update. The board's console is the Console tab.
     h += '<div class="card fl-panel' + (detailsHidden() ? ' terse' : '') + '"><div class="fl-tabs" role="tablist"><button role="tab" class="on" aria-selected="true">' + esc(b.kind === 'bridge' ? BRIDGE_TAB : 'Flash') + '</button>' + detailsBtn() + '</div>' +
@@ -700,6 +717,11 @@
     var got = c.fw.local ? Promise.resolve(flat ? flat.data : S.local.bytes) : bytesFor && bytesFor.key === key ? Promise.resolve(bytesFor.bytes) : S.catalog.fetch(c.fw);
     got.then(function (bytes) {
       if (runKey() !== key) return;
+      if (!c.fw.local && c.fw.kind === 'file' && c.fw.format !== 'bin') {
+        var fl = FL.files.flatten(FL.files.parse(c.fw.path, bytes).segments);
+        if (fl.addr !== c.board.flash.base) { S.bytesError = c.fw.name + ' starts at ' + I.hex(fl.addr) + ', and ' + c.board.name + '’s flash starts at ' + I.hex(c.board.flash.base) + '.'; render(); return; }
+        bytes = fl.data;
+      }
       bytesFor = { key: key, bytes: bytes };
       S.check = I.check(bytes, c.board); S.bytesReady = true; render();
       if (S.tab === 'probe') probeTakes();
@@ -1210,6 +1232,7 @@
   function forgetSystems() {
     try { localStorage.removeItem(SYS_KEY); } catch (e) { /* storage blocked */ }
     try { indexedDB.deleteDatabase(SYS_DB); } catch (e) { /* blocked */ }
+    try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* storage blocked */ }
     if (S.view === 'system') S.view = 'home';
     S.sys = null;
   }
@@ -1242,23 +1265,10 @@
     });
   }
   function relDay(t) { var d = Math.round((Date.now() - t) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago'; }
-  function systemRows() {
-    if (!systemsOn()) return '';
-    var on = S.view === 'system' && S.sys, list = readSystems();
-    var icon = '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="6" height="8" rx="1.3"/><rect x="12.5" y="6" width="6" height="8" rx="1.3"/><path d="M7.5 10h5"/><path d="M10 8.2v3.6"/></svg></span>';
-    var h = '<button class="proj fl-file-row" data-act="sys-new" title="A board reached through another board’s passthrough, from a .hex or .elf">' + icon +
-      '<span class="proj-body"><span class="proj-name">New passthrough system</span><span class="proj-sub">A board behind another board’s passthrough</span></span></button>';
-    list.slice(0, 6).forEach(function (x) {
-      var cur = on && S.sys.sys.id === x.id;
-      h += '<button class="proj fl-sys-row' + (cur ? ' active' : '') + '" data-act="sys-open" data-sys="' + esc(x.id) + '">' + icon +
-        '<span class="proj-body"><span class="proj-name">' + esc(x.name) + '</span><span class="proj-sub">' + esc([x.remote && x.remote.file ? x.remote.file.name : 'No file yet', relDay(x.at)].join(' · ')) + '</span></span></button>';
-    });
-    return h;
-  }
-  function openSystem(id) {
+  function openSystem(id, project) {
     if (S.run && S.run.busy) return toast('Wait for the update to finish.');
     var sys = id ? readSystems().filter(function (x) { return x.id === id; })[0] : null, fresh = !sys;
-    if (!sys) { sys = newSystem(); storeSystem(sys); }
+    if (!sys) { sys = newSystem(); if (project) sys.project = project; storeSystem(sys); }
     S.sys = { sys: sys, file: null, block: fresh ? 'remote' : '', units: null, loading: !!(sys.remote && sys.remote.file) };
     if (S.tab === 'console') S.tab = 'serial';
     select('system');
@@ -1270,10 +1280,400 @@
       render();
     });
   }
-  function systemChanged() { if (S.sys) { storeSystem(S.sys.sys); render(); } }
+  // ── Working projects (docs/working-projects.md) ──
+  // Flasher's own projects: the manifests' projects (flasher_data and the shared review-flasher-* repos), each with
+  // its images and saved systems, plus projects made here and not saved yet (kept in this browser, Save or
+  // Discard). FTEs edit and save; every write goes through FL.access (one commit on the head it read). The demo
+  // keeps its edits in this tab.
+  var DRAFT_KEY = (DEMO ? 'flasher.demo.' : 'flasher.v1.') + 'draftProjects';
+  var PID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+  function canEdit() { return DEMO || !!(S.catalog && S.catalog.fte); }
+  function readDrafts() {
+    var t = sysTag();
+    try { var l = JSON.parse(localStorage.getItem(DRAFT_KEY) || '[]'); return Array.isArray(l) ? l.filter(function (x) { return x && x.tag === t && PID.test(x.id || ''); }) : []; }
+    catch (e) { return []; }
+  }
+  function writeDrafts(list) {
+    var t = sysTag();
+    try {
+      var all = JSON.parse(localStorage.getItem(DRAFT_KEY) || '[]');
+      all = (Array.isArray(all) ? all : []).filter(function (x) { return x && x.tag !== t; }).concat(list.map(function (x) { return Object.assign({}, x, { tag: t }); }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(all));
+    } catch (e) { /* storage blocked: this visit only */ }
+  }
+  function ctxNow() { return { token: C.auth.token(), login: S.catalog && S.catalog.login }; }
+  function savedSystem(id) { return ((S.catalog && S.catalog.systems) || []).filter(function (x) { return x.id === id; })[0] || null; }
+
+  /* Every Working project, sorted by name: { key, pid, name, repo, draft, firmware, systems (saved), local (this
+     browser's unsaved systems) }. Keys: 'p:<id>' saved, 'd:<id>' not saved, 'u:' unsorted (systems made outside
+     any project, not saved). */
+  function workingProjects() {
+    var c = S.catalog, out = {}, list = [];
+    function get(key, name, extra) {
+      if (!out[key]) { out[key] = Object.assign({ key: key, name: name, firmware: [], systems: [], local: [] }, extra || {}); list.push(out[key]); }
+      return out[key];
+    }
+    if (c) {
+      Object.keys(c.projects || {}).forEach(function (pid) { get('p:' + pid, c.projects[pid].name, { pid: pid, repo: c.projects[pid].repo }); });
+      c.firmware.forEach(function (f) { get('p:' + f.project, f.project, { pid: f.project, repo: f.repo }).firmware.push(f); });
+      (c.systems || []).forEach(function (x) { get(x.project ? 'p:' + x.project : 'n:' + x.repo, x.project || 'No project', { pid: x.project, repo: x.repo }).systems.push(x); });
+    }
+    readDrafts().forEach(function (d) { get('d:' + d.id, d.name, { pid: d.id, draft: true }); });
+    if (systemsOn()) readSystems().forEach(function (sys) {
+      if (sys.saved && savedSystem(sys.id)) return;   // listed with the saved ones, marked if edited here
+      var p = sys.project && (out['p:' + sys.project] || out['d:' + sys.project]);
+      (p || get('u:', 'Unsorted', { unsorted: true, draft: true })).local.push(sys);
+    });
+    return list.sort(function (a, b) { return (a.unsorted ? 1 : 0) - (b.unsorted ? 1 : 0) || a.name.localeCompare(b.name); });
+  }
+  function projectByKey(key) { return workingProjects().filter(function (p) { return p.key === key; })[0] || null; }
+  function projectCount(p) { return p.firmware.length + p.systems.length + p.local.length; }
+  var SYS_ICON = '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="6" width="6" height="8" rx="1.3"/><rect x="12.5" y="6" width="6" height="8" rx="1.3"/><path d="M7.5 10h5"/><path d="M10 8.2v3.6"/></svg></span>';
+  var CHEV = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function sysRow(id, name, sub, on, act, mark) {
+    return '<button class="proj fl-sys-row' + (on ? ' active' : '') + '" data-act="' + act + '" data-sys="' + esc(id) + '">' + SYS_ICON +
+      '<span class="proj-body"><span class="proj-name">' + esc(name) + (mark ? ' <span class="fl-unsaved">' + esc(mark) + '</span>' : '') + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+  }
+  function workingRows(q) {
+    var bs = boards(), closed = closedGroups(), curSys = S.view === 'system' && S.sys ? S.sys.sys.id : '';
+    var h = '<div class="fl-sec"><span class="side-label">Working projects</span>' + (canEdit() ? '<button class="fl-sec-add" data-act="proj-new" title="A new project, kept in this browser until you save it">+ New project</button>' : '') + '</div>';
+    var list = workingProjects(), shown = 0;
+    list.forEach(function (p) {
+      var match = function (t) { return !q || (p.name + ' ' + t).toLowerCase().indexOf(q) >= 0; };
+      var fws = p.firmware.filter(function (f) { return match(f.name + ' ' + (bs[f.board] ? bs[f.board].name : '')); });
+      var syss = p.systems.filter(function (x) { return match(x.name); }), locs = p.local.filter(function (x) { return match(x.name); });
+      if (q && !fws.length && !syss.length && !locs.length && !match('')) return;
+      shown++;
+      var holds = (S.view === 'project' && S.projKey === p.key) || fws.some(function (f) { return S.view === 'fw' && S.fwId === f.id + '@' + f.board; }) ||
+        syss.concat(locs).some(function (x) { return x.id === curSys; });
+      var open = !closed[p.key] || !!q || holds, many = {};
+      fws.forEach(function (f) { many[f.board] = 1; });
+      fws.sort(function (x, y) { return ((bs[x.board] || {}).name + x.name).localeCompare((bs[y.board] || {}).name + y.name); });
+      h += '<div class="side-group"><div class="fl-group-row' + (S.view === 'project' && S.projKey === p.key ? ' on' : '') + '">' +
+        '<button class="side-group-head" data-act="toggle-group" data-group="' + esc(p.key) + '" aria-expanded="' + open + '" aria-label="Fold ' + esc(p.name) + '">' + CHEV +
+        '<span class="side-group-name">' + esc(p.name) + '</span>' + (p.draft ? '<span class="fl-unsaved">Not saved</span>' : '') + '<span class="side-group-count">' + projectCount(p) + '</span></button>' +
+        '<button class="fl-group-open" data-act="proj-open" data-proj="' + esc(p.key) + '" title="Open the project">›</button></div>' +
+        (open ? fws.map(function (f) {
+          var key = f.id + '@' + f.board, on = S.view === 'fw' && S.fwId === key, b = bs[f.board];
+          var sub = [Object.keys(many).length > 1 && b ? b.name : '', I.fmtBytes(f.size), f.built ? fmtDate(f.built) : f.published ? fmtDate(f.published) : ''].filter(Boolean).join(' · ');
+          return '<button class="proj' + (on ? ' active' : '') + '" data-act="open-fw" data-fw="' + esc(key) + '" title="' + esc(f.summary || f.name) + '">' + FW_ICON +
+            '<span class="proj-body"><span class="proj-name">' + esc(f.name) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+        }).join('') + syss.map(function (x) {
+          var local = readSystems().filter(function (s) { return s.id === x.id; })[0];
+          return sysRow(x.id, (local && local.name) || x.name, 'Passthrough system' + (x.remote.release ? ' · ' + x.remote.release.version : x.remote.file ? ' · ' + x.remote.file.name : ''),
+            curSys === x.id, 'sys-open-saved', local && local.dirty ? 'Edited' : '');
+        }).join('') + locs.map(function (x) {
+          return sysRow(x.id, x.name, 'Passthrough system · ' + (x.remote && x.remote.file ? x.remote.file.name : 'no file yet'), curSys === x.id, 'sys-open', 'Not saved');
+        }).join('') : '') + '</div>';
+    });
+    if (!shown) h += '<div class="side-empty">' + (q ? 'No matching firmware.' : S.loading ? 'Loading firmware…' : 'No projects yet.') + '</div>';
+    return h;
+  }
+
+  // ── The project page ──
+  function projectHtml() {
+    var p = projectByKey(S.projKey);
+    if (!p) return homeHtml();
+    var ed = canEdit(), repo = p.repo || FL.access.dataFull(), bs = boards();
+    var where = p.unsorted ? 'Passthrough systems made outside a project. Save one to put it in a project.' : p.draft ? 'Kept in this browser until you save it' + (DEMO ? '' : ' to ' + repo) + '.' : 'Saved in ' + (DEMO ? 'the demo' : repo) + '.';
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Working project' + (p.draft && !p.unsorted ? ' · not saved' : '') + '</div>' +
+      (ed && !p.unsorted ? '<input class="page-title fl-sys-title" data-change="proj-name" value="' + esc(p.name) + '" aria-label="Project name">' : '<h1 class="page-title">' + esc(p.name) + '</h1>') +
+      '<div class="page-sub">' + esc(where) + '</div></div>' +
+      (ed && !p.unsorted ? '<div class="fl-row fl-head-acts">' + (p.draft ? '<button class="btn" data-act="proj-discard">Discard</button><button class="btn btn-primary" data-act="proj-save">Save project</button>'
+        : '<button class="btn btn-plain" data-act="proj-delete">Delete project</button>') + '</div>' : '') + '</div>';
+    // Images
+    h += '<div class="card fl-pad fl-proj-card"><h3 class="fl-sys-edit-title">Images</h3>' + (p.firmware.length ? '<div class="fl-proj-list">' + p.firmware.map(function (f) {
+      return '<button class="fl-proj-item" data-act="open-fw" data-fw="' + esc(f.id + '@' + f.board) + '"><b>' + esc(f.name) + '</b><span>' + esc([bs[f.board] ? bs[f.board].name : f.board, I.fmtBytes(f.size), f.kind === 'file' ? f.format.toUpperCase() + ' uploaded here' : ''].filter(Boolean).join(' · ')) + '</span></button>';
+    }).join('') + '</div>' : '<p class="note">No images yet.</p>') +
+      (ed && !p.unsorted ? (p.draft ? '<p class="note">Save the project first, then upload images and define boards for it.</p>'
+        : '<div class="fl-row"><button class="btn" data-act="proj-upload">Upload an image…</button><button class="btn btn-plain" data-act="proj-board">Define a board…</button></div>') : '') + '</div>';
+    // Systems
+    var sysList = p.systems.map(function (x) { return { id: x.id, name: x.name, act: 'sys-open-saved', sub: 'Saved' }; })
+      .concat(p.local.map(function (x) { return { id: x.id, name: x.name, act: 'sys-open', sub: 'Not saved' }; }));
+    h += '<div class="card fl-pad fl-proj-card"><h3 class="fl-sys-edit-title">Passthrough systems</h3>' + (sysList.length ? '<div class="fl-proj-list">' + sysList.map(function (x) {
+      return '<button class="fl-proj-item" data-act="' + x.act + '" data-sys="' + esc(x.id) + '"><b>' + esc(x.name) + '</b><span>' + esc(x.sub) + '</span></button>';
+    }).join('') + '</div>' : '<p class="note">No systems yet.</p>') +
+      (systemsOn() ? '<div class="fl-row"><button class="btn" data-act="proj-sys-new">New passthrough system</button></div>' : '') + '</div>';
+    // Boards of a saved project
+    if (!p.draft) {
+      var mine = Object.keys(bs).filter(function (id) { return bs[id].project === p.pid; });
+      if (mine.length) h += '<div class="card fl-pad fl-proj-card"><h3 class="fl-sys-edit-title">Boards</h3><div class="fl-proj-list">' + mine.map(function (id) {
+        var b = bs[id];
+        return '<div class="fl-proj-item static"><b>' + esc(b.name) + '</b><span>' + esc([b.mcu, b.kind === 'bridge' ? 'through a passthrough' : b.flash ? I.fmtBytes(b.flash.size) + ' flash' : ''].filter(Boolean).join(' · ')) + '</span></div>';
+      }).join('') + '</div></div>';
+    }
+    return h + '</div>';
+  }
+
+  // ── Writes (FL.access in real use; the demo changes its catalog in this tab) ──
+  function demoNote() { toast('Saved in this tab: the demo keeps everything in the browser.'); }
+  function busyWrite(what, fn) {
+    if (S.writing) { toast('Wait for the save in progress.'); return Promise.resolve(false); }
+    S.writing = what; render();
+    return Promise.resolve().then(fn).then(function () { S.writing = ''; if (DEMO) { demoNote(); render(); return true; } return load().then(function () { toast(what + ': saved'); return true; }); },
+      function (e) { S.writing = ''; render(); toast(what + ': ' + (e.code === 'moved' ? 'someone else saved at the same time three times running; try again.' : e.message || e)); return false; });
+  }
+  function demoCatalog() { return S.catalog; }
+  function writeProject(pid, name, repo) {
+    if (DEMO) { demoCatalog().projects[pid] = { name: name, repo: 'the demo' }; return Promise.resolve(); }
+    return FL.access.saveProject(ctxNow(), repo, pid, name);
+  }
+  function writeSystem(sys, repo, file) {
+    if (DEMO) {
+      var c = demoCatalog(), rec = { id: sys.id, name: sys.name, project: sys.project, host: JSON.parse(JSON.stringify(sys.host)), link: JSON.parse(JSON.stringify(sys.link)),
+        remote: { name: sys.remote.name, file: sys.remote.file ? { name: sys.remote.file.name, sha256: sys.remote.file.sha256, size: sys.remote.file.size, paths: [] } : null, release: sys.remote.release || null }, repo: 'the demo' };
+      c.systems = (c.systems || []).filter(function (x) { return x.id !== sys.id; }).concat([rec]);
+      return Promise.resolve();
+    }
+    return FL.access.saveSystem(ctxNow(), repo, { id: sys.id, name: sys.name, project: sys.project, host: sys.host, link: sys.link,
+      remote: { name: sys.remote.name, release: sys.remote.release || null }, by: S.catalog && S.catalog.login, keepFile: !file && !sys.remote.release }, file);
+  }
+
+  function newProject() {
+    if (!canEdit()) return;
+    var name = prompt('Name the new project. It stays in this browser until you save it.', '');
+    if (name === null || !name.trim()) return;
+    var d = { id: FL.access.newId('p'), name: name.trim().slice(0, 80), at: Date.now() };
+    writeDrafts(readDrafts().concat([d]));
+    S.projKey = 'd:' + d.id; select('project');
+    return d;
+  }
+  function renameProject(name) {
+    var p = projectByKey(S.projKey); name = String(name || '').trim().slice(0, 80);
+    if (!p || !name || name === p.name || p.unsorted) return render();
+    if (p.draft) { writeDrafts(readDrafts().map(function (d) { return d.id === p.pid ? Object.assign(d, { name: name }) : d; })); render(); return; }
+    busyWrite('Renaming the project', function () { return writeProject(p.pid, name, p.repo); });
+  }
+  /* Save a project made here: its name, then each of its systems (with their files). */
+  function saveDraftProject(p) {
+    var repo = FL.access.dataFull();
+    return busyWrite('Saving ' + p.name, function () {
+      return writeProject(p.pid, p.name, repo).then(function () {
+        return p.local.reduce(function (chain, sys) { return chain.then(function () { return saveOneSystem(sys, repo); }); }, Promise.resolve());
+      }).then(function () { writeDrafts(readDrafts().filter(function (d) { return d.id !== p.pid; })); S.projKey = 'p:' + p.pid; });
+    });
+  }
+  function discardProject(p) {
+    var n = p.local.length;
+    if (!confirm('Discard “' + p.name + '”' + (n ? ' and its ' + n + ' unsaved system' + (n === 1 ? '' : 's') : '') + '? Nothing in GitHub changes.')) return;
+    writeDrafts(readDrafts().filter(function (d) { return d.id !== p.pid; }));
+    dropLocalSystems(p.local.map(function (x) { return x.id; }));
+    select('home'); toast('Discarded');
+  }
+  function deleteProject(p) {
+    var what = [p.firmware.length && p.firmware.length + ' image' + (p.firmware.length === 1 ? '' : 's'), p.systems.length && p.systems.length + ' system' + (p.systems.length === 1 ? '' : 's')].filter(Boolean).join(' and ');
+    var shared = !DEMO && S.catalog && S.catalog.roster && SM.sharedRepo(S.catalog.roster, p.pid);
+    if (shared) return toast('“' + p.name + '” is shared in ' + shared + '. Take everyone off it in People & access first.');
+    if (!confirm('Delete “' + p.name + '”' + (what ? ', with its ' + what : '') + ', from ' + (DEMO ? 'the demo' : p.repo) + '? Its files stay in the repository’s history.')) return;
+    busyWrite('Deleting ' + p.name, function () {
+      if (DEMO) {
+        var c = demoCatalog();
+        c.firmware = c.firmware.filter(function (f) { return f.project !== p.pid; });
+        c.systems = (c.systems || []).filter(function (x) { return x.project !== p.pid; });
+        Object.keys(c.boards).forEach(function (bid) { if (c.boards[bid].project === p.pid && !c.firmware.some(function (f) { return f.board === bid; })) delete c.boards[bid]; });
+        delete c.projects[p.pid];
+        return;
+      }
+      return FL.access.removeEntries(ctxNow(), p.repo, { project: p.pid, label: p.name });
+    }).then(function (ok) { if (ok) { dropLocalSystems(p.systems.map(function (x) { return x.id; })); select('home'); } });
+  }
+  function dropLocalSystems(ids) {
+    if (!ids.length) return;
+    try { localStorage.setItem(SYS_KEY, JSON.stringify(allSystems().filter(function (x) { return ids.indexOf(x.id) < 0; }))); } catch (e) { /* storage blocked */ }
+    ids.forEach(function (id) { idbFile('delete', id); });
+    if (S.sys && ids.indexOf(S.sys.sys.id) >= 0) S.sys = null;
+  }
+
+  // ── Systems: Save (asking which project when it has none), Discard changes, Delete ──
+  function saveOneSystem(sys, repo) {
+    var withFile = sys.remote.file && !sys.remote.release && !(sys.saved && sys.saved.fileSha === sys.remote.file.sha256);
+    var fileP = withFile ? idbFile('get', sys.id).then(function (rec) {
+      if (!rec || !rec.bytes) throw new Error('This browser no longer has ' + sys.remote.file.name + '. Open the file again, then save.');
+      return { name: rec.name, bytes: new Uint8Array(rec.bytes) };
+    }) : Promise.resolve(null);
+    return fileP.then(function (file) { return writeSystem(sys, repo, file); }).then(function () {
+      sys.saved = { repo: repo, fileSha: sys.remote.file ? sys.remote.file.sha256 : '', at: Date.now() }; sys.dirty = false;
+      storeSystem(sys);
+    });
+  }
+  function saveSystemNow() {
+    if (!S.sys || !canEdit()) return;
+    var sys = S.sys.sys;
+    if (sys.saved) return busyWrite('Saving ' + sys.name, function () { return saveOneSystem(sys, sys.saved.repo); });
+    var p = sys.project && (projectByKey('p:' + sys.project) || projectByKey('d:' + sys.project));
+    if (p && !p.unsorted) return saveInto(p);
+    pickProjectSheet('Save “' + sys.name + '” in a project', function (key) { var q = projectByKey(key); if (q) { sys.project = q.pid; storeSystem(sys); saveInto(q); } });
+    function saveInto(q) {
+      if (q.draft) return saveDraftProject(Object.assign({}, q, { local: q.local.filter(function (x) { return x.id === sys.id; }).length ? q.local : q.local.concat([sys]) }));
+      return busyWrite('Saving ' + sys.name, function () { return saveOneSystem(sys, q.repo); });
+    }
+  }
+  function discardSystemChanges() {
+    if (!S.sys || !S.sys.sys.saved) return;
+    if (!confirm('Discard your changes to “' + S.sys.sys.name + '”? It goes back to the saved one.')) return;
+    var id = S.sys.sys.id; dropLocalSystems([id]); openSavedSystem(id);
+  }
+  function deleteSavedSystem() {
+    var sys = S.sys && S.sys.sys; if (!sys || !sys.saved) return;
+    if (!confirm('Delete “' + sys.name + '” from ' + (DEMO ? 'the demo' : sys.saved.repo) + '? Its file stays in the repository’s history; nothing on any board changes.')) return;
+    busyWrite('Deleting ' + sys.name, function () {
+      if (DEMO) { demoCatalog().systems = (demoCatalog().systems || []).filter(function (x) { return x.id !== sys.id; }); return; }
+      return FL.access.removeEntries(ctxNow(), sys.saved.repo, { system: sys.id, label: sys.name });
+    }).then(function (ok) { if (ok) { dropLocalSystems([sys.id]); select('home'); } });
+  }
+  /* Open a saved system: this browser's copy when it has one (maybe edited), else a copy of the saved one with
+     its file (or its Signoff FW release) read again. */
+  function openSavedSystem(id) {
+    if (readSystems().some(function (x) { return x.id === id; })) return openSystem(id);
+    var x = savedSystem(id); if (!x) return;
+    var sys = newSystem();
+    Object.assign(sys, { id: x.id, name: x.name, project: x.project, host: { name: x.host.name, usb: x.host.usb.slice() }, link: Object.assign({}, x.link), learned: null,
+      remote: { name: x.remote.name, file: x.remote.file ? { name: x.remote.file.name, sha256: x.remote.file.sha256, size: x.remote.file.size } : null, seen: null },
+      saved: { repo: x.repo, fileSha: x.remote.file ? x.remote.file.sha256 : '', at: Date.now() }, dirty: false });
+    if (x.remote.release) sys.remote.release = Object.assign({}, x.remote.release);
+    storeSystem(sys);
+    var got = x.remote.file && S.catalog.fetchSystemFile ? S.catalog.fetchSystemFile(x).then(function (bytes) { return idbFile('put', id, { name: x.remote.file.name, bytes: bytes }); })
+      : x.remote.release ? (function () {
+        var r = relOf(x.remote.release.review + '/' + x.remote.release.release);
+        return r ? fetchRel(r).then(function (f) {
+          sys.remote.file = { name: f.name, sha256: f.sha256, size: f.bytes.length }; storeSystem(sys);
+          return idbFile('put', id, { name: f.name, bytes: f.bytes });
+        }) : Promise.resolve();
+      })() : Promise.resolve();
+    got.then(function () { openSystem(id); }, function (e) { toast('Couldn’t read its file: ' + (e.message || e)); openSystem(id); });
+  }
+  function pickProjectSheet(title, done) {
+    var list = workingProjects().filter(function (p) { return !p.unsorted; });
+    sheet('<div class="sheet-head"><h2>' + esc(title) + '</h2><p>Pick the project it belongs to.</p></div><div class="sheet-body"><div class="pick-grid" id="pp-list">' +
+      list.map(function (p, i) { return '<button type="button" class="pick' + (i === 0 ? ' on' : '') + '" data-act="ppick" data-ppick="' + esc(p.key) + '"><b>' + esc(p.name) + '</b><span>' + (p.draft ? 'Not saved: saved with it' : DEMO ? 'the demo' : esc(p.repo)) + '</span></button>'; }).join('') +
+      '<button type="button" class="pick' + (list.length ? '' : ' on') + '" data-act="ppick" data-ppick="new"><b>New project…</b><span>Named next</span></button></div></div>' +
+      '<div class="sheet-foot"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancel</button><button class="btn btn-primary" data-act="pp-ok">Save</button></div>');
+    pickDone = function () {
+      var on = document.querySelector('#pp-list .pick.on'); closeSheet();
+      if (!on) return;
+      if (on.dataset.ppick === 'new') { var d = newProject(); if (d) done('d:' + d.id); return; }
+      done(on.dataset.ppick);
+    };
+  }
+  var pickDone = null;
+
+  // ── Uploading an image and defining a board (a saved project) ──
+  function uploadSheet(file) {
+    var p = projectByKey(S.projKey); if (!p || p.draft) return;
+    var bs = boards(), ids = Object.keys(bs).filter(function (id) { return (bs[id].repo || 'the demo') === (p.repo || 'the demo') || DEMO; });
+    var fmt = FL.access.fileFormat(file.name);
+    if (!fmt) return toast('An image is a .bin, .hex, or .elf.');
+    sheet('<div class="sheet-head"><h2>Upload ' + esc(file.name) + '</h2><p>Into “' + esc(p.name) + '”, as it is (' + esc(I.fmtBytes(file.size)) + '). Flasher checks it against its board each time it flashes it.</p></div><div class="sheet-body">' +
+      '<div class="field"><label for="up-name">Name</label><input class="input" id="up-name" value="' + esc(file.name.replace(/\.[^.]+$/, '')) + '" maxlength="80"></div>' +
+      '<div class="field"><label for="up-board">Board</label><select class="input" id="up-board">' + ids.map(function (id) { return '<option value="' + esc(id) + '"' + (bs[id].project === p.pid ? ' selected' : '') + '>' + esc(bs[id].name) + (bs[id].kind === 'bridge' ? ' (through its passthrough: .hex or .elf)' : '') + '</option>'; }).join('') + '</select>' +
+      (ids.length ? '' : '<div class="hint-text">Define a board first.</div>') + '</div>' +
+      '<div class="row2"><div class="field"><label for="up-repo">Built from (repo)</label><input class="input" id="up-repo" placeholder="Optional: owner/name" maxlength="100"></div><div class="field"><label for="up-sha">Commit</label><input class="input" id="up-sha" placeholder="Optional" maxlength="40"></div></div>' +
+      '<div class="field"><label for="up-sum">Summary</label><input class="input" id="up-sum" placeholder="Optional: what this build is" maxlength="400"></div></div>' +
+      '<div class="sheet-foot"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancel</button><button class="btn btn-primary" data-act="up-ok"' + (ids.length ? '' : ' disabled') + '>Upload</button></div>', true);
+    upFile = file;
+  }
+  var upFile = null;
+  function uploadNow() {
+    var p = projectByKey(S.projKey), file = upFile; if (!p || !file) return;
+    var val = function (id) { var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+    var img = { name: file.name, title: val('up-name') || file.name, board: val('up-board'), project: p.pid, summary: val('up-sum'), by: S.catalog && S.catalog.login,
+      source: { repo: val('up-repo'), sha: /^[0-9a-f]{7,40}$/i.test(val('up-sha')) ? val('up-sha').toLowerCase() : '' } };
+    var b = boards()[img.board];
+    if (!b) return toast('Pick the board.');
+    if (b.kind === 'bridge' && /\.bin$/i.test(file.name)) return toast('A board behind a passthrough needs a .hex or .elf: a .bin has no addresses.');
+    closeSheet();
+    file.arrayBuffer().then(function (buf) {
+      img.bytes = new Uint8Array(buf);
+      busyWrite('Uploading ' + img.title, function () {
+        if (DEMO) {
+          return I.sha256(img.bytes).then(function (h) {
+            var c = demoCatalog(), id = FL.access.newId('i'), fmt = FL.access.fileFormat(file.name), f = { id: id, board: img.board, kind: 'file', format: fmt, name: img.title, summary: img.summary, description: '',
+              size: img.bytes.length, sha256: h, path: 'firmware/' + img.board + '/' + id + '.' + fmt, paths: [], project: p.pid, repo: 'the demo', source: { repo: img.source.repo, sha: img.source.sha, path: '', dirty: false }, edited: {} };
+            demoFiles[id] = img.bytes; c.firmware.push(f);
+          });
+        }
+        return FL.access.uploadImage(ctxNow(), p.repo, img);
+      });
+    });
+  }
+  var demoFiles = {};
+  function boardSheet() {
+    var p = projectByKey(S.projKey); if (!p || p.draft) return;
+    sheet('<div class="sheet-head"><h2>Define a board</h2><p>For “' + esc(p.name) + '”. A board reached through another board’s passthrough needs no entry: make a passthrough system instead.</p></div><div class="sheet-body">' +
+      '<div class="row2"><div class="field"><label for="bd-name">Name</label><input class="input" id="bd-name" maxlength="80" placeholder="Main board"></div><div class="field"><label for="bd-mcu">MCU</label><input class="input" id="bd-mcu" maxlength="60" placeholder="STM32G431"></div></div>' +
+      '<div class="row2"><div class="field"><label for="bd-fbase">Flash base</label><input class="input fl-mono" id="bd-fbase" value="0x08000000"></div><div class="field"><label for="bd-fsize">Flash size</label><input class="input fl-mono" id="bd-fsize" placeholder="0x20000"></div></div>' +
+      '<div class="row2"><div class="field"><label for="bd-rbase">RAM base</label><input class="input fl-mono" id="bd-rbase" value="0x20000000"></div><div class="field"><label for="bd-rsize">RAM size</label><input class="input fl-mono" id="bd-rsize" placeholder="0x8000"></div></div>' +
+      '<div class="row2"><div class="field"><label for="bd-run">Its firmware’s USB id <span class="fl-muted">(optional)</span></label><input class="input fl-mono" id="bd-run" placeholder="0483:5740"><div class="hint-text">Takes the 1200-baud restart. Without it the board goes into update mode by hand.</div></div>' +
+      '<div class="field"><label for="bd-runname">Its USB product name</label><input class="input" id="bd-runname" maxlength="80" placeholder="Optional"></div></div>' +
+      '<div class="field"><label for="bd-dfu">ROM bootloader’s USB id</label><input class="input fl-mono" id="bd-dfu" value="0483:DF11"></div>' +
+      '<div class="field"><label for="bd-steps">Update mode by hand (one step a line)</label><textarea class="input" id="bd-steps" rows="3" placeholder="Hold BOOT0.&#10;Press and release reset.&#10;Release BOOT0."></textarea></div>' +
+      '<div class="field"><label for="bd-notes">Notes</label><input class="input" id="bd-notes" maxlength="400" placeholder="Optional"></div></div>' +
+      '<div class="sheet-foot"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancel</button><button class="btn btn-primary" data-act="bd-ok">Save board</button></div>', true);
+  }
+  function boardNow() {
+    var p = projectByKey(S.projKey); if (!p) return;
+    var val = function (id) { var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+    var ids = function (t) { var u = parseUsb(t).ids[0]; return u ? { vid: '0x' + hex4(u.vid), pid: '0x' + hex4(u.pid) } : null; };
+    var name = val('bd-name'); if (!name) return toast('Name the board.');
+    var bid = SM.slugify(name).slice(0, 40) || 'board', n = 2;
+    while (boards()[bid]) bid = SM.slugify(name).slice(0, 36) + '-' + n++;
+    var b = { name: name, mcu: val('bd-mcu'), project: p.pid, flash: { base: val('bd-fbase'), size: val('bd-fsize') }, ram: { base: val('bd-rbase'), size: val('bd-rsize') },
+      dfu: Object.assign(ids(val('bd-dfu')) || {}, { name: 'DFU in FS Mode' }), notes: val('bd-notes'),
+      manualDfu: val('bd-steps').split(/\n+/).map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 8) };
+    var run = ids(val('bd-run'));
+    if (run) { b.run = Object.assign(run, { name: val('bd-runname') }); b.touchBaud = 1200; }
+    var problems = [];
+    if (!I.cleanBoard(bid, b, problems)) return toast(problems.join(' '));
+    closeSheet();
+    busyWrite('Saving board ' + name, function () {
+      if (DEMO) { var c = demoCatalog(), cb = I.cleanBoard(bid, b, []); cb.repo = 'the demo'; cb.project = p.pid; c.boards[bid] = cb; return; }
+      return FL.access.saveBoard(ctxNow(), p.repo, bid, b);
+    });
+  }
+
+  // ── An image's Name and Project (the About card), FTEs ──
+  function fwEditFor(f) { var k = f.id + '@' + f.board; if (!S.fwEdit || S.fwEdit.key !== k) S.fwEdit = { key: k, name: f.name, project: f.project }; return S.fwEdit; }
+  function fwEditHtml(f) {
+    if (!canEdit() || f.local) return '';
+    var e = fwEditFor(f), changed = e.name !== f.name || e.project !== f.project, list = workingProjects().filter(function (p) { return !p.unsorted; });
+    return '<div class="fl-fw-edit"><input class="input" data-change="fw-name" value="' + esc(e.name) + '" aria-label="Image name" maxlength="80" title="Name">' +
+      '<select class="input" data-change="fw-project" aria-label="Project" title="Project">' + list.map(function (p) {
+        var other = !DEMO && !p.draft && p.repo && p.repo !== f.repo;
+        return '<option value="' + esc(p.pid) + '"' + (p.pid === e.project ? ' selected' : '') + '>' + esc(p.name) + (p.draft ? ' (not saved)' : other ? ' (moves its board)' : '') + '</option>';
+      }).join('') + '<option value="__new">New project…</option></select>' +
+      (changed ? '<button class="btn" data-act="fw-discard">Discard</button><button class="btn btn-primary" data-act="fw-save"' + (S.writing ? ' disabled' : '') + '>Save</button>' : '') + '</div>';
+  }
+  function fwSave() {
+    var c = current(); if (!c || c.fw.local) return;
+    var f = c.fw, e = fwEditFor(f), list = workingProjects();
+    var target = list.filter(function (p) { return !p.unsorted && p.pid === e.project; })[0];
+    var name = e.name.trim() || f.name, nameChanged = name !== f.name, projChanged = e.project !== f.project;
+    if (!nameChanged && !projChanged) return;
+    if (projChanged && !target) return toast('Pick the project.');
+    var others = S.catalog.firmware.filter(function (x) { return x.board === f.board && x !== f; });
+    var cross = !DEMO && projChanged && !target.draft && target.repo !== f.repo;
+    if (cross && !confirm('“' + target.name + '” is in ' + target.repo + '. Moving there takes the board “' + (boards()[f.board] || {}).name + '”' + (others.length ? ' and its ' + others.length + ' other image' + (others.length === 1 ? '' : 's') : '') + ' too. Move them?')) return;
+    busyWrite('Saving ' + name, function () {
+      if (DEMO) {
+        if (target && target.draft) { demoCatalog().projects[target.pid] = { name: target.name, repo: 'the demo' }; writeDrafts(readDrafts().filter(function (d) { return d.id !== target.pid; })); }
+        f.name = name; if (projChanged) f.project = e.project; f.edited = { name: f.edited && f.edited.name || nameChanged, project: f.edited && f.edited.project || projChanged };
+        return;
+      }
+      var ctx = ctxNow(), chain = Promise.resolve();
+      if (projChanged && target.draft) chain = chain.then(function () { return FL.access.saveProject(ctx, f.repo, target.pid, target.name); }).then(function () { writeDrafts(readDrafts().filter(function (d) { return d.id !== target.pid; })); });
+      if (cross) {
+        chain = chain.then(function () { return FL.access.moveBoard(ctx, f.repo, target.repo, f.board, target.pid); });
+        if (nameChanged) chain = chain.then(function () { return FL.access.editFirmware(ctx, target.repo, f.id, f.board, { name: name }); });
+        return chain;
+      }
+      return chain.then(function () { return FL.access.editFirmware(ctx, f.repo, f.id, f.board, { name: nameChanged ? name : null, project: projChanged ? e.project : null }); });
+    }).then(function (ok) { if (ok) S.fwEdit = null; render(); });
+  }
+
+  function systemChanged() { if (S.sys) { if (S.sys.sys.saved) S.sys.sys.dirty = true; storeSystem(S.sys.sys); render(); } }
   function deleteSystem() {
     if (!S.sys || (S.run && S.run.busy)) return;
-    if (!confirm('Remove “' + S.sys.sys.name + '” from this browser? Its file is forgotten too; nothing on any board changes.')) return;
+    if (!confirm('Discard “' + S.sys.sys.name + '”? It was never saved, so it goes from this browser with its file; nothing on any board changes.')) return;
     var id = S.sys.sys.id;
     try { localStorage.setItem(SYS_KEY, JSON.stringify(allSystems().filter(function (x) { return x.id !== id; }))); } catch (e) { /* storage blocked */ }
     idbFile('delete', id); S.sys = null; select('home'); toast('Removed');
@@ -1368,7 +1768,7 @@
     var bytes = new TextEncoder().encode(c.demoDisplayHex()), name = 'display-1.4.0.hex';
     I.sha256(bytes).then(function (h) {
       var sys = newSystem();
-      sys.id = DEMO_SYS_ID; sys.name = 'Thermostat display';
+      sys.id = DEMO_SYS_ID; sys.name = 'Thermostat display'; sys.project = 'thermostat';
       sys.host = { name: 'Smart Thermostat Main PCBA', usb: [{ vid: 0x0483, pid: 0x5740 }] };
       sys.remote = { name: 'Display & Sensor Board', file: { name: name, sha256: h, size: bytes.length }, seen: null };
       return idbFile('put', sys.id, { name: name, bytes: bytes }).then(function () { storeSystem(sys); renderSide(); });
@@ -1480,10 +1880,15 @@
   }
   function systemHtml(c) {
     var sys = S.sys.sys, run = S.run && S.run.key === runKey() ? S.run : null, busy = run && run.busy;
-    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Passthrough system · kept in this browser</div>' +
+    var sp = sys.project && (projectByKey('p:' + sys.project) || projectByKey('d:' + sys.project)), ed = canEdit() && !busy && !S.writing;
+    var kept = sys.saved ? 'saved in ' + (sp ? sp.name : 'its project') + (sys.dirty ? ' · edited here, not saved' : '') : 'not saved' + (sp ? ' · in ' + sp.name : '');
+    var acts = sys.saved ? (sys.dirty ? '<button class="btn" data-act="sys-discard"' + (ed ? '' : ' disabled') + '>Discard changes</button><button class="btn btn-primary" data-act="sys-save"' + (ed ? '' : ' disabled') + '>Save</button>' : '') +
+        '<button class="btn btn-plain" data-act="sys-delete-saved"' + (ed ? '' : ' disabled') + '>Delete</button>'
+      : (canEdit() ? '<button class="btn btn-primary" data-act="sys-save"' + (ed ? '' : ' disabled') + '>Save…</button>' : '') + '<button class="btn btn-plain" data-act="sys-delete"' + (busy ? ' disabled' : '') + '>Discard</button>';
+    var h = '<div class="page"><div class="page-head"><div class="page-head-text"><div class="eyebrow">Passthrough system · ' + esc(kept) + '</div>' +
       '<input class="page-title fl-sys-title" data-change="sys-name" value="' + esc(sys.name) + '" aria-label="System name"' + (busy ? ' disabled' : '') + '>' +
       '<div class="page-sub">' + esc((sys.host.name || 'The host board') + ' passes its USB through to ' + (sys.remote.name || 'the remote board') + '. Click a block to set it up.') + '</div></div>' +
-      '<div class="fl-row fl-head-acts"><button class="btn btn-plain" data-act="sys-delete"' + (busy ? ' disabled' : '') + '>Remove</button></div></div>';
+      '<div class="fl-row fl-head-acts">' + acts + '</div></div>';
     h += browserNote();
     h += '<div class="card fl-pad fl-sys-card"><div id="fl-route-box">' + sysDiagram(c, run) + '</div></div>';
     h += sysEditor();
@@ -1962,6 +2367,23 @@
       case 'open-fw': select('fw', el.dataset.fw); break;
       case 'open-local': select('local'); break;
       case 'sys-new': openSystem(null); break;
+      case 'sys-open-saved': openSavedSystem(el.dataset.sys); break;
+      case 'sys-save': saveSystemNow(); break;
+      case 'sys-discard': discardSystemChanges(); break;
+      case 'sys-delete-saved': deleteSavedSystem(); break;
+      case 'proj-new': newProject(); break;
+      case 'proj-open': S.projKey = el.dataset.proj; select('project'); break;
+      case 'proj-save': { var ps = projectByKey(S.projKey); if (ps && ps.draft) saveDraftProject(ps); break; }
+      case 'proj-discard': { var pd = projectByKey(S.projKey); if (pd && pd.draft) discardProject(pd); break; }
+      case 'proj-delete': { var px = projectByKey(S.projKey); if (px && !px.draft) deleteProject(px); break; }
+      case 'proj-sys-new': { var pn = projectByKey(S.projKey); openSystem(null, pn && !pn.unsorted ? pn.pid : ''); break; }
+      case 'proj-upload': $('#proj-file-input').click(); break;
+      case 'proj-board': boardSheet(); break;
+      case 'up-ok': uploadNow(); break;
+      case 'bd-ok': boardNow(); break;
+      case 'pp-ok': if (pickDone) pickDone(); break;
+      case 'fw-save': ev.preventDefault(); fwSave(); break;
+      case 'fw-discard': ev.preventDefault(); S.fwEdit = null; render(); break;
       case 'sys-open': openSystem(el.dataset.sys); break;
       case 'sys-block': if (S.sys) { S.sys.block = S.sys.block === el.dataset.block ? '' : el.dataset.block; render(); } break;
       case 'sys-file': if (S.run && S.run.busy) toast('Wait for the update to finish.'); else $('#sys-file-input').click(); break;
@@ -2041,7 +2463,7 @@
         $('#p-projects-field').hidden = el.dataset.prole === 'fte';
         break;
       }
-      case 'ppick': el.classList.toggle('on'); break;
+      case 'ppick': if (el.closest('#pp-list')) { Array.prototype.forEach.call(document.querySelectorAll('#pp-list .pick'), function (x) { x.classList.toggle('on', x === el); }); } else el.classList.toggle('on'); break;
       case 'accept-invite':
         new window.Signoff.GitHubAccount(C.auth.token()).acceptInvitation(el.dataset.id).then(function () { toast('Invitation accepted'); load(); }, function (e) { toast('Couldn’t accept it: ' + e.message); });
         break;
@@ -2058,6 +2480,12 @@
     if (k === 'con-filter') { S.conFilter = ev.target.value; render(); }
     if (k && k.indexOf('sys-') === 0) systemField(k.slice(4), ev.target.value);
     if (k === 'fwrel-remote' && ev.target.value && S.sys) releaseToSystem(ev.target.value, S.sys.sys.id);
+    if (k === 'proj-name') renameProject(ev.target.value);
+    if (k === 'fw-name' && S.fwEdit) { S.fwEdit.name = ev.target.value.slice(0, 80); render(); }
+    if (k === 'fw-project' && S.fwEdit) {
+      if (ev.target.value === '__new') { var d = newProject(); if (d) { S.fwEdit.project = d.id; select('fw', S.fwEdit.key); } else render(); }
+      else { S.fwEdit.project = ev.target.value; render(); }
+    }
   });
 
   document.addEventListener('submit', function (ev) {
@@ -2156,6 +2584,7 @@
   }
   $('#file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; openLocal(f); });
   // A passthrough system's remote has its own picker, for a .hex or .elf only.
+  $('#proj-file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; if (f && S.view === 'project') uploadSheet(f); });
   $('#sys-file-input').addEventListener('change', function () { var f = this.files && this.files[0]; this.value = ''; if (S.view === 'system') setSystemFile(f); });
   // Drag and drop: a file dropped on the page opens as Open a file does; on the Debug probe tab, in the probe.
   function draggingFiles(ev) { return ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types || [], 'Files') >= 0; }

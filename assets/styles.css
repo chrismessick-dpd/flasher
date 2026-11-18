@@ -317,3 +317,32 @@ body.fl-dropping #main { outline: 3px dashed var(--accent); outline-offset: -8px
 .fl-rel-row.withdrawn .proj-name { text-decoration: line-through; color: var(--text-3); }
 .fl-rel-row.draft .proj-name::after { content: ' · draft'; font-weight: 400; color: var(--text-3); }
 .fl-rel-systems { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Working and Released projects (docs/working-projects.md) */
+.fl-sec { display: flex; align-items: center; gap: 8px; padding: 12px 8px 4px; }
+.fl-sec:first-of-type { padding-top: 8px; }
+.fl-sec .side-label { flex: 1; }
+.fl-sec-note { font-size: 11px; }
+.fl-sec-add { border: 0; background: none; color: var(--accent-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+.fl-sec-add:hover { background: var(--accent-soft); }
+.fl-group-row { display: flex; align-items: center; border-radius: 6px; }
+.fl-group-row .side-group-head { flex: 1; min-width: 0; }
+.fl-group-row.on .side-group-head { color: var(--accent-ink); }
+.fl-group-open { border: 0; background: none; color: var(--text-3); font-size: 16px; line-height: 1; padding: 2px 8px; cursor: pointer; border-radius: 6px; }
+.fl-group-open:hover { color: var(--text); background: var(--bg-sunk); }
+.fl-unsaved { flex: none; font-size: 10px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text-2); border: 1px dashed var(--text-3); border-radius: 980px; padding: 0 6px; }
+.proj-name .fl-unsaved { margin-left: 4px; vertical-align: 1px; }
+.fl-target { font-size: 11.5px; font-weight: 600; color: var(--text-2); padding: 6px 10px 2px 28px; }
+.fl-proj-card { margin-bottom: 14px; }
+.fl-proj-list { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 10px; }
+.fl-proj-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; border: 0; background: none; border-radius: 8px; padding: 7px 10px; font: inherit; color: var(--text); cursor: pointer; }
+.fl-proj-item:hover { background: var(--bg-sunk); }
+.fl-proj-item.static { cursor: default; }
+.fl-proj-item.static:hover { background: none; }
+.fl-proj-item span { font-size: 12.5px; color: var(--text-3); }
+.fl-fw-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.fl-fw-edit .input { width: auto; min-width: 0; padding: 4px 8px; font-size: 12.5px; }
+.fl-fw-edit input.input { width: 190px; }
+.fl-fw-edit select.input { max-width: 220px; }
+.fl-fw-edit .btn { padding: 4px 12px; font-size: 12.5px; }
+@media (max-width: 700px) { .fl-fw-edit { margin-left: 0; width: 100%; } .fl-fw-edit input.input { flex: 1; } }

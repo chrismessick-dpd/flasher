@@ -40,7 +40,6 @@
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="5"/><path d="M11 11l3.5 3.5" stroke-linecap="round"/></svg>
       <input id="fw-search" type="search" placeholder="Search projects and firmware" autocomplete="off">
     </div>
-    <div class="side-head"><span class="side-label">Firmware</span></div>
     <nav class="side-list" id="fw-list" aria-label="Firmware"></nav>
     <!-- The rest of the suite, folded to a row of icons as in Signoff EE (setupToolsFold in app.js). -->
     <div class="side-tools" id="side-tools">
@@ -107,6 +106,7 @@
 <div id="sheet-root"></div>
 <div class="toasts" id="toasts"></div>
 <input type="file" id="sys-file-input" accept=".hex,.ihx,.elf,.axf,.out" hidden>
+<input type="file" id="proj-file-input" accept=".bin,.hex,.elf" hidden>
 <input type="file" id="file-input" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot,application/octet-stream" hidden>
 <!-- The probe's own file pickers (assets/probe/app.js). -->
 <input type="file" id="pb-file" accept=".bin,.hex,.ihx,.elf,.axf,.out,.srec,.s19,.s28,.s37,.mot" hidden>
