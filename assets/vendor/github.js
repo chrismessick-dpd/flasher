@@ -219,6 +219,14 @@
      Resolves { projects, roster, moved, gone, cache, templates, version, pushed, commitUrl };
      gone: local copies of projects deleted here since the last sync (with opts.dropGone).
      templates is null when they haven't changed since the last sync. */
+  // A fingerprint of a project as this browser holds it (FNV-1a over its stable JSON, the local-only slug
+  // left out), so a cache line can say which copy it was recorded with.
+  function docPrint(doc) {
+    var d = Object.assign({}, doc); delete d.slug;
+    var s = M.stableStringify(d), h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16) + ':' + s.length;
+  }
   GitHubStore.prototype.sync = function (local, roster, cache, opts) {
     var self = this;
     opts = opts || {};
@@ -274,9 +282,15 @@
         // last synced, not that its local copy holds it (2026-11-19: a tab whose stored projects were older
         // than its cache wrote its old copy over a newer file, losing 35 Scribe sections and 44
         // requirements another tool had added).
+        // The cache line is trusted only for the very copy it was recorded with (fp, a fingerprint of the
+        // merged project): a copy older than its cache line (another tab saved the line, or the browser's
+        // storage was full when the projects were saved) is read again and merged (2026-11-19: a restored
+        // review never reached a browser whose cache line said it already had it). Lines from before fp
+        // are read again once.
         var projectReads = projectEntries.map(function (e) {
-          var id = idOf(e.path, dir);
-          return fresh(e) || !local[id] || (opts.edited && opts.edited(id)) ? fetchText(e) : Promise.resolve({ path: e.path, sha: e.sha, unchanged: true });
+          var id = idOf(e.path, dir), c = cache[e.path];
+          var trusted = !fresh(e) && local[id] && c.fp && c.fp === docPrint(local[id]);
+          return !trusted || (opts.edited && opts.edited(id)) ? fetchText(e) : Promise.resolve({ path: e.path, sha: e.sha, unchanged: true });
         });
         var tplReads = Promise.resolve(null), versionRead = Promise.resolve(null);
         if (opts.tool) {
@@ -336,7 +350,7 @@
           var written = M.withSummary(doc, self.cfg.summarize);
           candidates.push({ path: r ? r.path : dir + id + '.json', text: M.stableStringify(written), label: doc.meta.name, sha: r && r.sha });
         });
-        projectEntries.forEach(function (e) { nextCache[e.path] = { sha: e.sha }; });
+        projectEntries.forEach(function (e) { var id = idOf(e.path, dir); nextCache[e.path] = merged[id] ? { sha: e.sha, fp: docPrint(merged[id]) } : { sha: e.sha }; });
         if (mergedRoster && (Object.keys(mergedRoster.users).length || Object.keys(mergedRoster.shared).length)) {
           candidates.push({ path: rosterPath, text: M.stableStringify(mergedRoster), label: 'people', sha: rosterEntry && rosterEntry.sha, roster: true });
         }
