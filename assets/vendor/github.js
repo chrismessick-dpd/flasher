@@ -269,9 +269,14 @@
           if (!direct(e, dir)) return;
           (belongsHere(idOf(e.path, dir), mergedRoster) ? projectEntries : strays).push(e);
         });
-        // Projects: fetch only what changed, or what we have no local copy of.
+        // Projects: fetch only what changed, or what we have no local copy of. A project with edits here
+        // (opts.edited) is always read and merged before it's written: the cache says what this browser
+        // last synced, not that its local copy holds it (2026-11-19: a tab whose stored projects were older
+        // than its cache wrote its old copy over a newer file, losing 35 Scribe sections and 44
+        // requirements another tool had added).
         var projectReads = projectEntries.map(function (e) {
-          return fresh(e) || !local[idOf(e.path, dir)] ? fetchText(e) : Promise.resolve({ path: e.path, sha: e.sha, unchanged: true });
+          var id = idOf(e.path, dir);
+          return fresh(e) || !local[id] || (opts.edited && opts.edited(id)) ? fetchText(e) : Promise.resolve({ path: e.path, sha: e.sha, unchanged: true });
         });
         var tplReads = Promise.resolve(null), versionRead = Promise.resolve(null);
         if (opts.tool) {

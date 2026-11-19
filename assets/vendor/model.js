@@ -741,7 +741,52 @@
       pos: specPos(r.pos) };
     // Labels dragged off their place on this block's lines (Chris, 2026-11-13), only when there are any.
     if (labs) out.labels = labs;
+    // A section's box dragged bigger than its blocks need (Chris, 2026-11-18), only when it was.
+    var grow = specGrow(r.grow);
+    if (grow) out.grow = grow;
+    // Routed lines in the block diagram (Chris, 2026-11-18): ports dragged round this block, and the
+    // shapes of lines from it, only when there are any.
+    var ports = specPorts(r.ports), routes = specRoutes(r.routes);
+    if (ports) out.ports = ports;
+    if (routes) out.routes = routes;
     return out;
+  }
+  // { '<other section id>|<link word>': { side ('l', 'r', 't', 'b'), t (0 to 1 along it) } }.
+  function specPorts(v) {
+    if (!v || typeof v !== 'object') return null;
+    var out = {}, n = 0;
+    Object.keys(v).forEach(function (k) {
+      var q = v[k], t = q && Number(q.t), side = q && oneOf(['l', 'r', 't', 'b'], q.side, '');
+      if (n >= 100 || k.length > 120 || !side || !isFinite(t)) return;
+      out[k] = { side: side, t: Math.round(Math.max(0, Math.min(1, t)) * 1000) / 1000 }; n++;
+    });
+    return n ? out : null;
+  }
+  // { '<to section id>|<link word>': { v, a, b, mode } }: a line's shape as Loom's routing keeps it (v its
+  // middle runs' places, alternately x and y; a and b the sides its ends were shaped on; mode 'behind').
+  function specRoutes(v) {
+    if (!v || typeof v !== 'object') return null;
+    var out = {}, n = 0;
+    Object.keys(v).forEach(function (k) {
+      var q = v[k]; if (n >= 100 || k.length > 120 || !q || typeof q !== 'object') return;
+      var o = {};
+      if (Array.isArray(q.v) && q.v.length <= 41 && q.v.every(function (x) { return isFinite(Number(x)); })) o.v = q.v.map(function (x) { return Math.max(-20000, Math.min(40000, Math.round(Number(x) * 10) / 10)); });
+      if (o.v) { o.a = oneOf(['l', 'r'], q.a, 'r'); o.b = oneOf(['l', 'r'], q.b, 'l'); if (q.tr === true) o.tr = true; }   // tr: routed upright, x and y swapped
+      if (q.mode === 'behind') o.mode = 'behind';
+      if (o.v || o.mode) { out[k] = o; n++; }
+    });
+    return n ? out : null;
+  }
+  // { l, t, r, b }: how far each edge of a section's box reaches past the fit around its blocks (0 or more).
+  function specGrow(v) {
+    if (!v || typeof v !== 'object') return null;
+    var out = {}, any = false;
+    ['l', 't', 'r', 'b'].forEach(function (k) {
+      var n = Number(v[k] || 0);
+      out[k] = isFinite(n) ? Math.max(0, Math.min(5000, Math.round(n))) : 0;
+      if (out[k]) any = true;
+    });
+    return any ? out : null;
   }
   // { '<other section id>|<link word>': { t, x, y } }: a dragged label's place along its line (0 to 1) and,
   // when it was pulled off the line, its offset from there (drawn with an arrow back to the line).

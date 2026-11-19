@@ -1236,6 +1236,15 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .spec-node.drop rect:first-of-type { stroke: var(--accent); stroke-width: 3; fill: var(--accent-soft); }
 .spec-edge-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; pointer-events: stroke; }
 .spec-edge-hit:hover { stroke: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* Routed lines (2026-11-18): runs drag, and each end's port slides round its block. */
+svg.spec-flow .spec-edge-hit { cursor: move; touch-action: none; }
+.spec-port { cursor: grab; touch-action: none; }
+.spec-port-hit { fill: transparent; }
+.spec-port-dot { fill: var(--bg-elev); stroke: var(--text-3); stroke-width: 1.2; opacity: 0; transition: opacity 0.12s; }
+.spec-port.pinned .spec-port-dot { stroke: var(--accent); fill: var(--accent); } /* filled, not hue alone */
+svg.spec-flow:hover .spec-port-dot, svg.spec-flow.moving .spec-port-dot { opacity: 0.9; }
+.spec-port:hover .spec-port-dot { opacity: 1; stroke: var(--accent); stroke-width: 1.8; }
+svg.spec-flow.moving .spec-port, svg.spec-flow.moving .spec-edge-hit { pointer-events: none; }
 /* A selected line (its panel open): accent, thicker, with its pulse (the rules above). */
 .spec-map.focus:not(.hovering) .spec-edge.sel, .spec-map.hovering .spec-edge.sel { opacity: 1; stroke: var(--accent); stroke-width: 3; }
 .spec-edge-title { margin: 0 0 14px; font-size: 16px; line-height: 1.35; }
@@ -1317,6 +1326,10 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .spec-group-g .spec-group { fill: var(--bg-sunk); fill-opacity: 0.6; stroke: var(--hair-2); stroke-width: 1.2; }
 .spec-group-g:hover .spec-group { stroke: var(--text-3); }
 .spec-group-g.sel .spec-group { stroke: var(--accent); stroke-width: 2; }
+.spec-grip { fill: transparent; stroke: none; }
+.spec-grip.g-n, .spec-grip.g-s { cursor: ns-resize; } .spec-grip.g-e, .spec-grip.g-w { cursor: ew-resize; }
+.spec-grip.g-nw, .spec-grip.g-se { cursor: nwse-resize; } .spec-grip.g-ne, .spec-grip.g-sw { cursor: nesw-resize; }
+svg.spec-flow.moving .spec-grip { pointer-events: none; }
 .spec-group-g.drop .spec-group, .spec-group-g.drop:hover .spec-group { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 6 4; fill: var(--accent-soft); fill-opacity: 1; }
 .spec-group-label { font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; fill: var(--text-2); pointer-events: none; }
 .spec-flow .spec-node { cursor: grab; }
