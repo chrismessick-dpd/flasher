@@ -817,6 +817,18 @@ button.fab-rev { border: none; margin-left: 6px; cursor: pointer; background: va
 .rev-note-head:disabled { cursor: default; background: transparent; }
 .rev-note-cl { font-size: 12px; font-weight: 400; flex: none; min-width: 0; }
 .rev-note .cmt { margin: 0 0 10px 7px; }
+/* Next revision updates: the notes on the whole review and the box to add one (Revisions tab). */
+.rev-note-label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin: 4px 0 8px; }
+.rev-note-whole .cmt-head { display: flex; align-items: center; gap: 8px; }
+.rev-note-del { margin-left: auto; width: 24px; height: 24px; opacity: 0.55; }
+.rev-note-del:hover, .rev-note-del:focus-visible { opacity: 1; }
+.rev-note-del svg { width: 12px; height: 12px; }
+.rev-notes-none { margin: 4px 0 10px; }
+.rev-note-add { border-top: 1px solid var(--hair); padding: 12px 0 4px; }
+.rev-notes-list > .rev-note-add:first-child { border-top: 0; }
+.rev-note-add textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 56px; }
+.rev-note-add-foot { display: flex; align-items: center; gap: 12px; margin-top: 8px; font-size: 12.5px; }
+.rev-note-add-foot .muted { flex: 1; min-width: 0; }
 .rev-older { border-top: 1px solid var(--hair); padding-top: 10px; margin-top: 10px; }
 .rev-older .rev-acts { margin-top: 8px; }
 @media (max-width: 860px) { .rev-body { padding-left: 18px; } }

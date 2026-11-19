@@ -522,7 +522,8 @@
 
   // Notes for the next revision: comments tagged @revnotes, grouped by the check they're on.
   // Newest first: groups by their latest tagged comment, and comments within a group. A custom
-  // issue whose own text carries the tag forms a group too (comments may be empty).
+  // issue, a rework, or a requirement whose own text carries the tag forms a group too (comments
+  // may be empty). Notes typed on the Revisions tab are comments on the whole review (item '').
   var REVNOTE = /(^|[^\w@])@revnotes\b/i;
   function isRevNote(text) { return REVNOTE.test(String(text || '')); }
   function stripRevNote(text) { return String(text || '').replace(/(^|[^\w@])@revnotes\b:?/ig, '$1').replace(/[ \t]{2,}/g, ' ').trim(); }
@@ -536,6 +537,14 @@
     Object.keys(project.custom || {}).forEach(function (k) {
       var c = project.custom[k];
       if (c && !c.deleted && (isRevNote(c.text) || isRevNote(c.hint))) group(k, c.createdAt || c.updatedAt);
+    });
+    Object.keys(project.rework || {}).forEach(function (k) {
+      var w = project.rework[k];
+      if (w && typeof w === 'object' && !w.deleted && [w.title, w.problem, w.fix].some(isRevNote)) group(k, w.createdAt || w.updatedAt);
+    });
+    Object.keys(project.reqs || {}).forEach(function (k) {
+      var q = project.reqs[k];
+      if (q && typeof q === 'object' && !q.deleted && isRevNote(q.text)) group(k, q.createdAt || q.updatedAt);
     });
     var latest = function (g) { return String((g.comments.length ? g.comments[0].at : g.at) || ''); };
     return order.map(function (k) { groups[k].comments.reverse(); return groups[k]; })
