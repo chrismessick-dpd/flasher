@@ -132,7 +132,7 @@
       }, fail);
     }
     var tok = C.auth.token();
-    if (!tok) { S.catalog = null; S.fwr = null; S.loading = false; S.syncing = false; render(); return Promise.resolve(); }
+    if (!tok) { S.catalog = null; S.fwr = null; S.loading = false; S.syncing = false; render(); openWantedJig(); return Promise.resolve(); }
     loadFwr(null);   // Signoff FW's releases: their own repos and access, read beside the manifest
     // Another account (signed in here or in another tab) never sees the last one's list.
     if (S.catalog && S.catalogTag !== tagOf(tok)) { S.catalog = null; S.syncedAt = 0; S.check = null; S.bytesReady = false; bytesFor = null; }
@@ -141,7 +141,7 @@
     if (!S.catalog) {
       var kept = readKept(tok);
       if (kept) {
-        try { S.catalog = C.fromKept(kept.loaded, tok); S.syncedAt = kept.at; restoreFromUrl(); if (current()) prepareBytes(); }
+        try { S.catalog = C.fromKept(kept.loaded, tok); S.syncedAt = kept.at; restoreFromUrl(); if (current()) prepareBytes(); openWantedJig(); }
         catch (e) { S.catalog = null; forgetKept(); }
       }
     }
@@ -157,6 +157,7 @@
       // A flash under way keeps the bytes it has; a list that changed under the open firmware fetches it again.
       if (current() && !(S.run && S.run.busy) && !(S.bytesReady && bytesFor && bytesFor.key === runKey())) prepareBytes();
       render();
+      openWantedJig();
     }
     function fail(e) {
       if (S.catalog && !DEMO && e.code !== 'none' && e.code !== 'invited') { S.syncError = e.message || String(e); S.loading = false; render(); return; }
@@ -224,6 +225,33 @@
       openLocalBytes(f.name, f.bytes, f.sha256, boards()[f.load.board] ? f.load.board : '', { key: key, target: x.target.name, version: x.rel.version, state: x.rel.state, withdrawnWhy: x.rel.withdrawnWhy || '', base: f.load.base });
     }, function (e) { if (S.relKey === key) { S.rel = { busy: false, error: e.message || String(e) }; render(); } });
   }
+  // ── Builds from Jig (assets/jig.js) ──
+  // ?jig=<project>/<commit> (Jig's Flash) opens that build as a file for its board, once the board list is here:
+  // the copy Jig left in this browser, else read from jig_data. Tried once.
+  var wantJig = (/[?&]jig=([a-z0-9-]+\/[0-9a-f]+)/.exec(location.search) || [])[1] || '';
+  function openWantedJig() {
+    var k = wantJig;
+    if (!k || !FL.jig) return;
+    wantJig = '';
+    S.jigBusy = k; render();
+    FL.jig.take(k, DEMO).then(function (got) {
+      if (got) return got;
+      var tok = C.auth.token();
+      if (DEMO || !tok) throw new Error(DEMO ? 'That build isn’t in this browser. Press Flash in the Jig demo again.' : 'Sign in to read that build from Jig.');
+      return FL.jig.fetch(k, { token: tok });
+    }).then(function (b) {
+      S.jigBusy = '';
+      openLocalBytes(b.name, b.bytes, b.sha256, boards()[b.board] ? b.board : '', null);
+      if (S.local && S.local.sha256 === b.sha256) { S.local.jig = { key: k, project: b.project, commit: b.commit, name: b.projectName, board: b.board }; setUrl(); render(); }
+    }, function (e) { S.jigBusy = ''; render(); toast('Couldn’t open the Jig build: ' + (e.message || e)); });
+  }
+  function jigHint(j) {
+    var known = boards()[j.board];
+    return '<div class="hint"><b>From Jig</b>' + esc(j.name) + ', build ' + esc(j.commit.slice(0, 8)) + '. Its SHA-256 was checked against the build record.' +
+      (j.board && !known ? ' Jig built it for “' + esc(j.board) + '”, which isn’t in your firmware list: pick its board below.' : '') +
+      ' <a href="../jig/index.html?' + (DEMO ? 'demo&' : '') + 'project=' + encodeURIComponent(j.project) + '">Back to Jig</a></div>';
+  }
+
   // Released projects: Signoff FW's targets, grouped by their project (the FW review's meta.project), each target's
   // releases under it, newest first. Read only here: they're edited in Signoff FW.
   function fwrRows() {
@@ -305,6 +333,8 @@
     if (c && !c.fw.local) q.push('fw=' + c.fw.board + '/' + c.fw.id);
     var rk = S.view === 'release' ? S.relKey : S.view === 'local' && S.local && S.local.release ? S.local.release.key : wantRel;
     if (rk) q.push('release=' + rk);
+    var jk = S.view === 'local' && S.local && S.local.jig ? S.local.jig.key : wantJig || S.jigBusy;
+    if (jk) q.push('jig=' + jk);
     try { history.replaceState(null, '', location.pathname + (q.length ? '?' + q.join('&') : '')); } catch (e) { /* file:// */ }
   }
 
@@ -460,6 +490,7 @@
       '<h1 class="page-title">Flash a board</h1><div class="page-sub">Pick the firmware, plug the board in by USB, and flash it from Chrome or Edge. Everything runs in the browser, with no IDE or programming software to install.</div></div></div>';
     h += browserNote();
     var c = S.catalog;
+    if (S.jigBusy) h += '<div class="hint"><b>Getting the Jig build</b>Reading ' + esc(S.jigBusy.split('/')[0]) + ', build ' + esc(S.jigBusy.split('/')[1].slice(0, 8)) + ', and checking its SHA-256…</div>';
     if (S.loading) h += '<div class="hint"><b>Loading</b>Reading the firmware list from ' + esc(DEMO ? 'the demo' : FL.config.owner + '/' + FL.config.repo) + '…</div>';
     else if (!DEMO && !C.auth.token()) {
       h += '<div class="hint fl-signin"><b>Projects’ firmware is private</b>Sign in with the GitHub access you use for Signoff to see the projects shared with you. A file from this computer, the Debug probe, and the Console work without it.' +
@@ -517,6 +548,7 @@
       var lr = S.local.release;
       h += '<div class="hint"><b>From Signoff FW</b>' + esc(lr.target + ' ' + lr.version) + ', ' + esc(FL.fwr.LABEL[lr.state].toLowerCase()) + '. Its SHA-256 was checked when it was read.</div>' + relBanner(lr);
     }
+    if (fw.local && S.local && S.local.jig) h += jigHint(S.local.jig);
     if (fw.local) {
       // Every board, those reached through another board's passthrough too (a .hex or .elf is split into its blocks).
       var opts = Object.keys(boards()).map(function (id) { return '<option value="' + esc(id) + '"' + (S.local.boardId === id ? ' selected' : '') + '>' + esc(boards()[id].name) + (boards()[id].kind === 'bridge' ? ' (through its passthrough)' : '') + '</option>'; }).join('');

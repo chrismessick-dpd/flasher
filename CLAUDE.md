@@ -147,6 +147,13 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   rename, a new project with a system saved, a saved system edited and saved, a board defined, a `.hex` uploaded
   and opened for flashing, and a project deleted. Not tried signed in: no real manifest has been written yet.
 
+- **Builds from Jig (2026-11-20, Chris: "start integrating to pass over to flasher"; committed locally, not pushed).**
+  `?jig=<project>/<commit>` opens a build from Jig, the suite's online firmware editor (`../jig/docs/design.md`,
+  *Flasher*): `assets/jig.js` (`FL.jig.take` takes the copy Jig left in IndexedDB `dovetail-handoff`, `FL.jig.fetch`
+  reads `jig_data`'s tree otherwise), the SHA-256 checked against the build record, opened as a file for the board
+  Jig's `boards.json` names (`openWantedJig`, `jigHint` in `app.js`; `S.local.jig`). Tests 86 (3 new). Tried in `?demo`
+  from Jig's demo: opened on the Main PCBA and flashed. Not tried signed in. Not built: a *From Jig* sidebar section.
+
 ## Rules
 
 - **No client data here.** The page, docs, tests, and `publish.py` stay board-agnostic:

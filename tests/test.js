@@ -1015,6 +1015,41 @@
     ok(!srcRaw.boards.a1 && !srcRaw.firmware.some(function (f) { return f.board === 'a1'; }) && !w.gh.files(FL.config.repo)['firmware/a1/fw-a1.bin'], '…and gone from flasher_data, files too');
   });
 
+  // ── Builds from Jig (assets/jig.js) ──
+  async function jigWorld(over) {
+    var gh = FakeGitHub({ owner: OWNER, tokens: { chris: OWNER, eve: 'eve' } }), bin = image(4096, 8), sha = await I.sha256(bin);
+    var files = { 'boards.json': JSON.stringify({ boards: { jb: { name: 'J board', fqbn: 'x:y:z', flasher: 'a1' } } }),
+      'projects/fan-ab12/project.json': JSON.stringify({ name: 'Fan test', board: 'jb' }),
+      'builds/fan-ab12/abc1234.json': JSON.stringify(Object.assign({ ok: true, board: 'jb', sha256: sha }, over || {})),
+      'builds/fan-ab12/abc1234.bin': bin };
+    await gh.repo('jig_data', files);
+    return { gh: gh, bin: bin, sha: sha };
+  }
+  test('Jig: a build read from jig_data, checked, with its Flasher board and project name', async function () {
+    var w = await jigWorld();
+    var b = await FL.jig.fetch('fan-ab12/abc1234', { token: 'chris', owner: OWNER, fetch: w.gh.fetch });
+    eq(b.board, 'a1'); eq(b.projectName, 'Fan test'); eq(b.sha256, w.sha); eq(b.bytes.length, 4096); eq(b.name, 'Fan_test-abc1234.bin');
+  });
+  test('Jig: a failed build, a wrong SHA-256, a missing build, and someone without access are refused', async function () {
+    var w = await jigWorld({ ok: false });
+    await FL.jig.fetch('fan-ab12/abc1234', { token: 'chris', owner: OWNER, fetch: w.gh.fetch }).then(function () { throw new Error('opened a failed build'); }, function (e) { ok(/failed/.test(e.message), e.message); });
+    w = await jigWorld({ sha256: '00' });
+    await FL.jig.fetch('fan-ab12/abc1234', { token: 'chris', owner: OWNER, fetch: w.gh.fetch }).then(function () { throw new Error('opened a bad .bin'); }, function (e) { eq(e.code, 'mismatch'); });
+    await FL.jig.fetch('fan-ab12/def5678', { token: 'chris', owner: OWNER, fetch: w.gh.fetch }).then(function () { throw new Error('opened a missing build'); }, function (e) { ok(/no build/.test(e.message), e.message); });
+    await FL.jig.fetch('fan-ab12/abc1234', { token: 'eve', owner: OWNER, fetch: w.gh.fetch }).then(function () { throw new Error('eve read it'); }, function (e) { ok(/can’t open/.test(e.message), e.message); });
+    await FL.jig.fetch('../x/abc1234', { token: 'chris' }).then(function () { throw new Error('took a bad key'); }, function () {});
+  });
+  test('Jig: a build handed over in this browser is taken once, and checked', async function () {
+    var bin = image(2048, 3), sha = await I.sha256(bin);
+    await Signoff.handoff.put({ id: 'jig:fan-ab12/abc1234', name: 'Fan-abc1234.bin', bytes: bin, sha256: sha, board: 'a1', projectName: 'Fan' }, true);
+    var b = await FL.jig.take('fan-ab12/abc1234', true);
+    eq(b.board, 'a1'); eq(b.bytes.length, 2048); eq(b.commit, 'abc1234');
+    eq(await FL.jig.take('fan-ab12/abc1234', true), null, 'gone once taken');
+    await Signoff.handoff.put({ id: 'jig:fan-ab12/abc1234', bytes: bin, sha256: 'ff' }, true);
+    await FL.jig.take('fan-ab12/abc1234', true).then(function () { throw new Error('took a bad copy'); }, function (e) { eq(e.code, 'mismatch'); });
+    await Signoff.handoff.remove('jig:fan-ab12/abc1234', true);
+  });
+
   // ── Run ──
   var out = document.getElementById('out'), failed = 0;
   tests.reduce(function (p, t) {
