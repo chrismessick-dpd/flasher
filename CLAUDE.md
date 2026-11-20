@@ -151,8 +151,14 @@ bootloader. Read `README.md` first, and `../CLAUDE.md` for the suite's hard rule
   `?jig=<project>/<commit>` opens a build from Jig, the suite's online firmware editor (`../jig/docs/design.md`,
   *Flasher*): `assets/jig.js` (`FL.jig.take` takes the copy Jig left in IndexedDB `dovetail-handoff`, `FL.jig.fetch`
   reads `jig_data`'s tree otherwise), the SHA-256 checked against the build record, opened as a file for the board
-  Jig's `boards.json` names (`openWantedJig`, `jigHint` in `app.js`; `S.local.jig`). Tests 86 (3 new). Tried in `?demo`
-  from Jig's demo: opened on the Main PCBA and flashed. Not tried signed in. Not built: a *From Jig* sidebar section.
+  Jig's `boards.json` names (`openWantedJig`, `jigHint` in `app.js`; `S.local.jig`). Tests 87 (4 new). Tried in `?demo`
+  from Jig's demo: opened on the Main PCBA and flashed. Not tried signed in.
+  Then (2026-11-20, Chris: the remaining items): a **From Jig** sidebar section (`loadJig`, `jigRows`, `openJig`; `FL.jig.list`
+  reads `jig_data`'s tree for each project's newest passing build, keeping each build record's few fields in
+  `flasher.v1.jigBuilds` by blob SHA; a sign-in that can't open `jig_data` sees no section; `+ New in Jig` for FTEs), and
+  **New editable project…** on a Working project's Boards card for the boards Jig builds for (`jigNewRow`), opening
+  `../jig/?new=1&board=<id>`. Sign out forgets `flasher.v1.jigBuilds`. Tried in `?demo` (a made-up Jig row, flashed; the
+  link opens Jig's New project window on the Main PCBA).
 
 ## Rules
 

@@ -50,6 +50,7 @@
     conBaud: 115200, conFilter: '',    // the console's rate, and which board's ports to list ('' = any)
     fwr: null,                         // Signoff FW releases (assets/fwreleases.js): { state, targets, errors, fte, error }
     relKey: '', rel: null,             // view 'release': '<review id>/<release id>', and its fetch { busy, error }
+    jig: null,                         // Jig's builds (assets/jig.js): { state: 'loading' | 'ok' | 'none' | 'error', items, tag }
     projKey: '', fwEdit: null, writing: ''   // view 'project' (docs/working-projects.md); an image's Name and Project edits; a save under way
   };
   var demoBoard = { running: true };   // the simulated board's state in ?demo
@@ -128,12 +129,13 @@
         c.systems = c.systems || [];
         c.firmware.forEach(function (f) { f.project = f.project || (c.boards[f.board] && c.boards[f.board].project); f.edited = f.edited || {}; });
         c.fetchSystemFile = function (x) { return idbFile('get', x.id).then(function (rec) { if (!rec) throw new Error('not in this browser'); return new Uint8Array(rec.bytes); }); };
-        done(c); return loadFwr(c);
+        done(c); loadJig(); return loadFwr(c);
       }, fail);
     }
     var tok = C.auth.token();
     if (!tok) { S.catalog = null; S.fwr = null; S.loading = false; S.syncing = false; render(); openWantedJig(); return Promise.resolve(); }
     loadFwr(null);   // Signoff FW's releases: their own repos and access, read beside the manifest
+    loadJig();       // Jig's builds, for FTEs who can open jig_data
     // Another account (signed in here or in another tab) never sees the last one's list.
     if (S.catalog && S.catalogTag !== tagOf(tok)) { S.catalog = null; S.syncedAt = 0; S.check = null; S.bytesReady = false; bytesFor = null; }
     if (S.syncing) return S.syncing;
@@ -233,9 +235,22 @@
     var k = wantJig;
     if (!k || !FL.jig) return;
     wantJig = '';
+    openJig(k);
+  }
+  // A build: the copy Jig left in this browser, else read from jig_data (a row of From Jig, or a link opened later).
+  // The demo's rows are made here, as the demo's other images are.
+  function openJig(k) {
+    if (S.run && S.run.busy) return toast('Wait for the flash to finish.');
     S.jigBusy = k; render();
+    var demoRow = DEMO && S.jig && S.jig.items.filter(function (x) { return x.key === k && x.demo; })[0];
     FL.jig.take(k, DEMO).then(function (got) {
       if (got) return got;
+      if (demoRow && boards()[demoRow.flasher]) {
+        var bin = FL.catalog.makeImage(demoRow.size, 13, boards()[demoRow.flasher]), commit = k.split('/')[1];
+        return I.sha256(bin).then(function (h) {
+          return { key: k, project: demoRow.project, commit: commit, name: FL.jig.fileName(demoRow.name, commit), bytes: bin, sha256: h, board: demoRow.flasher, projectName: demoRow.name };
+        });
+      }
       var tok = C.auth.token();
       if (DEMO || !tok) throw new Error(DEMO ? 'That build isn’t in this browser. Press Flash in the Jig demo again.' : 'Sign in to read that build from Jig.');
       return FL.jig.fetch(k, { token: tok });
@@ -244,6 +259,52 @@
       openLocalBytes(b.name, b.bytes, b.sha256, boards()[b.board] ? b.board : '', null);
       if (S.local && S.local.sha256 === b.sha256) { S.local.jig = { key: k, project: b.project, commit: b.commit, name: b.projectName, board: b.board }; setUrl(); render(); }
     }, function (e) { S.jigBusy = ''; render(); toast('Couldn’t open the Jig build: ' + (e.message || e)); });
+  }
+  // From Jig: each Jig project's newest passing build. Jig is for FTEs: a sign-in that can't open jig_data sees no section.
+  var jigLoading = null;
+  function loadJig() {
+    if (!FL.jig) return Promise.resolve();
+    if (jigLoading) return jigLoading;
+    var tok = C.auth.token(), tag = DEMO ? 'demo' : tagOf(tok);
+    if (!DEMO && !tok) { S.jig = null; return Promise.resolve(); }
+    if (S.jig && S.jig.tag !== tag) S.jig = null;
+    if (!S.jig) S.jig = { state: 'loading', items: [], tag: tag };
+    var got = DEMO ? Promise.resolve([{ key: 'status-led-k3m9/4d3e0b1c', project: 'status-led-k3m9', name: 'Status LED blink', at: new Date(Date.now() - 3600000).toISOString(),
+      size: 22016, boardName: 'Main PCBA (Smart Thermostat)', flasher: 'tstat-main', demo: true }]).then(function (items) { return { items: items, boards: ['tstat-main'] }; }) : FL.jig.list({ token: tok });
+    jigLoading = got.then(function (r) {
+      if (!DEMO && tagOf(C.auth.token()) !== tag) return;
+      S.jig = { state: 'ok', items: r.items, boards: r.boards, tag: tag };
+    }, function (e) {
+      S.jig = { state: e.status === 404 || e.status === 403 ? 'none' : 'error', error: e.message || String(e), items: [], tag: tag };
+    }).then(function () { jigLoading = null; render(); });
+    return jigLoading;
+  }
+  function jigNewHref(boardId) {
+    return '../jig/index.html?' + (DEMO ? 'demo&' : '') + 'new=1' + (boardId ? '&board=' + encodeURIComponent(boardId) : '');
+  }
+  // New editable project: a sketch in Jig for one of these boards (only those Jig can build for).
+  function jigNewRow(ids) {
+    if (!ids.length) return '';
+    return '<div class="fl-row">' + ids.map(function (id) {
+      var n = boards()[id].name;
+      return '<a class="btn" href="' + esc(jigNewHref(id)) + '" title="Open Jig, the online editor, with a new sketch for ' + esc(n) + '">New editable project' + (ids.length > 1 ? ' for ' + esc(n) : '') + '…</a>';
+    }).join('') + '</div>';
+  }
+  function jigRows() {
+    var j = S.jig;
+    if (!j || j.state === 'none' || (j.state === 'ok' && !j.items.length && !canEdit())) return '';
+    var head = '<div class="fl-sec"><span class="side-label">From Jig</span><span class="fl-muted fl-sec-note">' +
+      (canEdit() ? '<a href="' + esc(jigNewHref('')) + '" title="Start a sketch in Jig, the online editor">+ New in Jig</a>' : 'Firmware editor') + '</span></div>';
+    if (j.state === 'loading') return head + '<div class="side-empty">Reading Jig’s builds…</div>';
+    if (j.state === 'error') return head + '<div class="side-empty">Couldn’t read Jig’s builds: ' + esc(j.error) + '</div>';
+    var q = ($('#fw-search').value || '').trim().toLowerCase(), cur = S.view === 'local' && S.local && S.local.jig ? S.local.jig.key : '';
+    var list = j.items.filter(function (x) { return !q || (x.name + ' ' + x.boardName).toLowerCase().indexOf(q) >= 0; });
+    if (!list.length) return q ? '' : head + '<div class="side-empty">No passing builds yet.</div>';
+    return head + list.map(function (x) {
+      var sub = [x.boardName, 'build ' + x.key.split('/')[1].slice(0, 7), x.at ? fmtDate(x.at) : ''].filter(Boolean).join(' · ');
+      return '<button class="proj' + (cur === x.key ? ' active' : '') + '" data-act="open-jig" data-jig="' + esc(x.key) + '" title="' + esc(x.name + ': its newest passing build in Jig') + '">' + FW_ICON +
+        '<span class="proj-body"><span class="proj-name">' + esc(x.name) + '</span><span class="proj-sub">' + esc(sub) + '</span></span></button>';
+    }).join('');
   }
   function jigHint(j) {
     var known = boards()[j.board];
@@ -406,7 +467,7 @@
       '<span class="fl-proj-icon" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 2.5H5.5a1.5 1.5 0 0 0-1.5 1.5v12a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5V7z"/><path d="M11.5 2.5V7H16"/></svg></span>' +
       '<span class="proj-body"><span class="proj-name">' + esc(S.local ? S.local.name : 'A file from this computer') + '</span><span class="proj-sub">' +
       esc(S.local ? I.fmtBytes(S.local.bytes.length) : '.bin, .hex, or .elf; or drop it here') + '</span></span></button>';
-    list.innerHTML = fileRow + h + fwrRows();
+    list.innerHTML = fileRow + h + fwrRows() + jigRows();
     var pl = document.querySelector('.side-tools [data-internal]');
     if (pl) pl.hidden = !(DEMO || (S.catalog && S.catalog.fte));
   }
@@ -1432,7 +1493,9 @@
       if (mine.length) h += '<div class="card fl-pad fl-proj-card"><h3 class="fl-sys-edit-title">Boards</h3><div class="fl-proj-list">' + mine.map(function (id) {
         var b = bs[id];
         return '<div class="fl-proj-item static"><b>' + esc(b.name) + '</b><span>' + esc([b.mcu, b.kind === 'bridge' ? 'through a passthrough' : b.flash ? I.fmtBytes(b.flash.size) + ' flash' : ''].filter(Boolean).join(' · ')) + '</span></div>';
-      }).join('') + '</div></div>';
+      }).join('') + '</div>' +
+        // Jig (../jig/docs/design.md, *Flasher*): a new sketch for one of these boards, edited and built online.
+        jigNewRow(mine.filter(function (id) { return ed && S.jig && (S.jig.boards || []).indexOf(id) >= 0; })) + '</div>';
     }
     return h + '</div>';
   }
@@ -2421,6 +2484,7 @@
       case 'sys-file': if (S.run && S.run.busy) toast('Wait for the update to finish.'); else $('#sys-file-input').click(); break;
       case 'sys-demo-file': demoSystemFile(); break;
       case 'open-rel': openRelease(el.dataset.rel); break;
+      case 'open-jig': openJig(el.dataset.jig); break;
       case 'rel-to-sys': releaseToSystem(el.dataset.rel || S.relKey, el.dataset.sys || ''); break;
       case 'sys-link-reset': if (S.sys) { S.sys.sys.link = Object.assign({}, LINK); systemChanged(); } break;
       case 'sys-forget-port': if (S.sys) { S.sys.sys.learned = null; systemChanged(); toast('Flasher will ask for the passthrough port again'); } break;
@@ -2467,7 +2531,7 @@
       case 'sign-out':
         if (!confirm('Sign out of this browser? This removes the GitHub token every Signoff tool here shares, so Signoff EE, ME, FW, PL, and Fabcheck sign out too. Flasher also forgets the passthrough systems and their files kept here.')) break;
         (window.SignoffAuth ? window.SignoffAuth.signOut() : Promise.resolve()).catch(function () { /* cleared below */ }).then(function () {
-          C.auth.clear(); forgetKept(); forgetSystems(); try { localStorage.removeItem('flasher.v1.fwReleases'); } catch (e) { /* storage blocked */ } S.fwr = null; closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
+          C.auth.clear(); forgetKept(); forgetSystems(); try { localStorage.removeItem('flasher.v1.fwReleases'); localStorage.removeItem('flasher.v1.jigBuilds'); } catch (e) { /* storage blocked */ } S.fwr = null; S.jig = null; closeSheet(); S.catalog = null; S.syncedAt = 0; S.view = S.local ? 'local' : 'home'; load(); toast('Signed out');
         });
         break;
       case 'gh-signin': ghSignIn(el); break;

@@ -74,5 +74,54 @@
     });
   }
 
-  FL.jig = { KEY_RE: KEY_RE, take: take, fetch: fetch, REPO: REPO };
+  // Every Jig project and its newest passing build, for the sidebar's From Jig section ({ items, boards }). Build records never change
+  // (named by commit), so the few fields used are kept in this browser by blob SHA and each is read once.
+  var CACHE_KEY = 'flasher.v1.jigBuilds';
+  function readCache() { try { return JSON.parse(localStorage.getItem(CACHE_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function writeCache(c) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch (e) { /* full or blocked: read again next time */ } }
+  function list(opts) {
+    var gs = new window.Signoff.GitHubStore({ owner: opts.owner || REPO.owner, repo: REPO.repo, branch: 'main', token: opts.token }, opts.fetch);
+    var cache = readCache(), used = {};
+    function json(sha) { return gs.api('/git/blobs/' + sha).then(function (b) { return JSON.parse(new TextDecoder().decode(b64bytes(b.content))); }); }
+    return gs.snapshot().then(function (snap) {
+      var blobs = {}, projects = {}, builds = {};
+      snap.entries.forEach(function (e) { if (e.type === 'blob') blobs[e.path] = e.sha; });
+      Object.keys(blobs).forEach(function (p) {
+        var m = /^projects\/([a-z0-9][a-z0-9-]*)\/project\.json$/.exec(p);
+        if (m) projects[m[1]] = blobs[p];
+        m = /^builds\/([a-z0-9][a-z0-9-]*)\/([0-9a-f]{7,64})\.json$/.exec(p);
+        if (m && blobs['builds/' + m[1] + '/' + m[2] + '.bin']) (builds[m[1]] = builds[m[1]] || []).push({ commit: m[2], sha: blobs[p] });
+      });
+      var boardsP = blobs['boards.json'] ? json(blobs['boards.json']).then(function (x) { return (x && x.boards) || {}; }, function () { return {}; }) : Promise.resolve({});
+      var ids = Object.keys(projects).filter(function (id) { return builds[id]; });
+      return Promise.all([boardsP].concat(ids.map(function (id) {
+        return Promise.all([json(projects[id]).catch(function () { return {}; })].concat(builds[id].map(function (b) {
+          used[b.sha] = true;
+          if (cache[b.sha]) return Promise.resolve(Object.assign({ commit: b.commit }, cache[b.sha]));
+          return json(b.sha).then(function (r) {
+            var keep = { ok: !!r.ok, at: typeof r.startedAt === 'string' ? r.startedAt : '', board: typeof r.board === 'string' ? r.board : '', size: r.bytes | 0 };
+            cache[b.sha] = keep;
+            return Object.assign({ commit: b.commit }, keep);
+          }, function () { return null; });
+        }))).then(function (all) {
+          var meta = all[0] || {}, ok = all.slice(1).filter(function (b) { return b && b.ok; }).sort(function (x, y) { return x.at < y.at ? 1 : x.at > y.at ? -1 : 0; });
+          return ok.length ? { project: id, name: typeof meta.name === 'string' ? meta.name : id, board: ok[0].board, build: ok[0] } : null;
+        });
+      }))).then(function (all) {
+        var boards = all[0];
+        Object.keys(cache).forEach(function (k) { if (!used[k]) delete cache[k]; });
+        writeCache(cache);
+        var items = all.slice(1).filter(Boolean).map(function (x) {
+          var jb = boards[x.board] || {};
+          return { key: x.project + '/' + x.build.commit, project: x.project, name: x.name, at: x.build.at, size: x.build.size,
+            boardName: typeof jb.name === 'string' ? jb.name : x.board, flasher: typeof jb.flasher === 'string' ? jb.flasher : '' };
+        }).sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+        // The Flasher boards Jig can build for (New editable project is offered only on those).
+        var flasherBoards = Object.keys(boards).map(function (k) { return boards[k] && typeof boards[k].flasher === 'string' ? boards[k].flasher : ''; }).filter(Boolean);
+        return { items: items, boards: flasherBoards };
+      });
+    });
+  }
+
+  FL.jig = { KEY_RE: KEY_RE, take: take, fetch: fetch, list: list, REPO: REPO, fileName: fileName };
 })(window.FL = window.FL || {});

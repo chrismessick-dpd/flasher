@@ -1039,6 +1039,27 @@
     await FL.jig.fetch('fan-ab12/abc1234', { token: 'eve', owner: OWNER, fetch: w.gh.fetch }).then(function () { throw new Error('eve read it'); }, function (e) { ok(/can’t open/.test(e.message), e.message); });
     await FL.jig.fetch('../x/abc1234', { token: 'chris' }).then(function () { throw new Error('took a bad key'); }, function () {});
   });
+  test('Jig: the From Jig list has each project’s newest passing build, and reads each record once', async function () {
+    try { localStorage.removeItem('flasher.v1.jigBuilds'); } catch (e) { /* blocked */ }
+    var gh = FakeGitHub({ owner: OWNER, tokens: { chris: OWNER } }), bin = image(1024, 2);
+    await gh.repo('jig_data', {
+      'boards.json': JSON.stringify({ boards: { jb: { name: 'J board', flasher: 'a1' } } }),
+      'projects/fan-ab12/project.json': JSON.stringify({ name: 'Fan test', board: 'jb' }),
+      'projects/led-cd34/project.json': JSON.stringify({ name: 'LED', board: 'jb' }),
+      'projects/new-ef56/project.json': JSON.stringify({ name: 'Never built', board: 'jb' }),
+      'builds/fan-ab12/aaa1111.json': JSON.stringify({ ok: true, board: 'jb', startedAt: '2026-11-20T01:00:00Z', bytes: 1024 }), 'builds/fan-ab12/aaa1111.bin': bin,
+      'builds/fan-ab12/bbb2222.json': JSON.stringify({ ok: true, board: 'jb', startedAt: '2026-11-20T02:00:00Z', bytes: 1024 }), 'builds/fan-ab12/bbb2222.bin': bin,
+      'builds/fan-ab12/ccc3333.json': JSON.stringify({ ok: false, board: 'jb', startedAt: '2026-11-20T03:00:00Z' }),
+      'builds/led-cd34/ddd4444.json': JSON.stringify({ ok: false, board: 'jb', startedAt: '2026-11-20T04:00:00Z' })
+    });
+    var calls = 0, f = function (u, o) { if (/\/git\/blobs\//.test(u)) calls++; return gh.fetch(u, o); };
+    var got = await FL.jig.list({ token: 'chris', owner: OWNER, fetch: f }), items = got.items;
+    eq(got.boards.join(','), 'a1', 'the Flasher boards Jig builds for');
+    eq(items.map(function (x) { return x.key + ' ' + x.name + ' ' + x.flasher + ' ' + x.boardName; }).join(','), 'fan-ab12/bbb2222 Fan test a1 J board', 'the newest passing build; failed and unbuilt projects left out');
+    var first = calls; calls = 0;
+    await FL.jig.list({ token: 'chris', owner: OWNER, fetch: f });
+    ok(calls < first, 'build records are read once (' + first + ' blob reads, then ' + calls + ')');
+  });
   test('Jig: a build handed over in this browser is taken once, and checked', async function () {
     var bin = image(2048, 3), sha = await I.sha256(bin);
     await Signoff.handoff.put({ id: 'jig:fan-ab12/abc1234', name: 'Fan-abc1234.bin', bytes: bin, sha256: sha, board: 'a1', projectName: 'Fan' }, true);
