@@ -1244,6 +1244,8 @@ html.spec-exporting, html.spec-exporting * { transition: none !important; animat
 .spec-lead-dot:hover .spec-lead-pt { r: 4; }
 .spec-node { cursor: pointer; }
 .spec-node rect { fill: var(--bg-elev); stroke: var(--hair-2); stroke-width: 1.2; }
+/* A block's own outline color (ticket 12); hover and selection still show the accent. */
+.spec-node[data-tint] > rect:first-of-type { stroke: var(--blk); stroke-width: 2.2; }
 .spec-node:hover rect:first-of-type { stroke: var(--accent); stroke-width: 1.8; }
 .spec-node.iface rect { stroke: var(--accent); stroke-dasharray: 5 3; }
 .spec-node .spec-node-dots { fill: url(#spec-dots); stroke: var(--warn); stroke-width: 1.4; stroke-dasharray: 3 3; }
@@ -1446,6 +1448,18 @@ svg.spec-flow.moving .spec-grip { pointer-events: none; }
 .spec-pt-head > span:not(.spacer) { font-size: 12.5px; color: var(--text-3); }
 .spec-pt-head .spacer { flex: 1; }
 .spec-pt-rail { font-size: 10.5px; font-weight: 600; fill: var(--text-2); font-variant-numeric: tabular-nums; pointer-events: none; }
+/* The Power tab draws the same tree with the budget on it (power.js; 2026-11-23). */
+.spec-pt-num { font-size: 10px; fill: var(--text-2); font-variant-numeric: tabular-nums; pointer-events: none; }
+.spec-pt-num.warn { fill: var(--text); font-weight: 600; }
+.spec-pt-num.bad { fill: var(--issue); font-weight: 700; }
+.spec-pt-foot { font-size: 10px; fill: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; }
+.spec-pt-flag { fill: var(--issue); font-weight: 700; font-size: 12px; }
+.spec-pt-barbg { fill: var(--bg-sunk); stroke: var(--hair-2); stroke-width: 0.5; }
+.spec-pt-bar { fill: var(--accent); }
+.spec-pt-bar.warn { fill: var(--warn); }
+.spec-pt-bar.bad { fill: var(--issue); }
+.spec-pt-src { pointer-events: none; }
+.spec-pt-budget .pw-legend { margin-top: 8px; }
 .spec-pt-pin { fill: var(--bg-elev); stroke: var(--text-2); stroke-width: 1.2; pointer-events: none; }
 .spec-pt-pin.source { fill: var(--text-2); }
 .st-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 13px; }
@@ -2012,3 +2026,16 @@ table.pw-t { width: 100%; border-collapse: collapse; font-size: 13px; font-varia
 .pw-issues li { display: flex; gap: 8px; align-items: baseline; }
 .pw-issues li.hit:hover > span:last-child { color: var(--accent); }
 @media (max-width: 600px) { .pw-hr-row { grid-template-columns: 80px minmax(0, 1fr) 90px; } }
+
+/* Scribe block panel: Name with the outline color wheel (ticket 12, 2026-11-23). */
+.spec-name-row { display: flex; gap: 8px; align-items: center; }
+.spec-name-row .input { flex: 1; min-width: 0; }
+.spec-color-btn { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--hair-2); padding: 3px; background: var(--bg-elev); cursor: pointer; display: grid; place-items: center; }
+.spec-color-btn span { width: 100%; height: 100%; border-radius: 50%; background: conic-gradient(#d64545, #e08a2c, #d4b100, #3f9a4a, #1f9e9a, #3a6fd8, #8a55c8, #d64545); }
+.spec-color-btn.set span { background: var(--blk); box-shadow: inset 0 0 0 2px var(--bg-elev); }
+.spec-color-btn:hover, .spec-color-btn[aria-expanded="true"] { border-color: var(--accent); }
+.spec-color-pop { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.spec-color-sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--bg-elev); box-shadow: 0 0 0 1px var(--hair-2); background: var(--blk); cursor: pointer; padding: 0; }
+.spec-color-sw.on { box-shadow: 0 0 0 2px var(--text); }
+.spec-color-custom { position: relative; overflow: hidden; background: conic-gradient(#d64545, #e08a2c, #d4b100, #3f9a4a, #1f9e9a, #3a6fd8, #8a55c8, #d64545); }
+.spec-color-custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }

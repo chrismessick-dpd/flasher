@@ -895,8 +895,12 @@
     // Power connections shown or hidden as lines (Chris, 2026-11-22), only when any were set.
     var sh = specShown(r.shown);
     if (sh) out.shown = sh;
+    // A block's outline color in the diagrams (ticket 12, Chris, 2026-11-23), "#rrggbb", only when set.
+    var col = specColor(r.color);
+    if (col) out.color = col;
     return out;
   }
+  function specColor(v) { return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : ''; }
   // { '<to section id>|<link word>': true | false }: whether a power connection from this block is drawn as a
   // line (unset: drawn within one section, not across).
   function specShown(v) {
