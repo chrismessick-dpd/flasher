@@ -623,7 +623,8 @@
   function specPowerItems(text) {
     return specLinkItems(text).map(function (it) {
       var words = String(it.label || '').split(',').map(function (w) { return w.trim().toLowerCase().replace(/\s+/g, ' '); });
-      return { rail: it.name.trim(), role: words.indexOf('source') >= 0 ? 'source' : 'sink', tree: words.indexOf('no tree') < 0, label: String(it.label || '') };
+      // "battery" is a source too (assets/power.js; 2026-11-24).
+      return { rail: it.name.trim(), role: words.indexOf('source') >= 0 || words.indexOf('battery') >= 0 ? 'source' : 'sink', tree: words.indexOf('no tree') < 0, label: String(it.label || '') };
     }).filter(function (x) { return x.rail; });
   }
   // Writing a Power line keeps every word in a rail's brackets as written (the power budget's numbers, "3.0–3.6 V,
@@ -898,6 +899,38 @@
     // A block's outline color in the diagrams (ticket 12, Chris, 2026-11-23), "#rrggbb", only when set.
     var col = specColor(r.color);
     if (col) out.color = col;
+    // A block's datasheets (Chris, 2026-11-24): links, and PDFs stored next to the review, only when there are any.
+    var ds = specDatasheets(r.datasheets);
+    if (ds) out.datasheets = ds;
+    return out;
+  }
+  // [{ id, name, url } | { id, name, file, sha256, bytes, parts, by, at }]: a link (http or https), or a PDF stored in
+  // the review's home repo at datasheets/<review>/<file> (in `parts` pieces <file>.001, … when over
+  // GitHubStore.PART_BYTES), checked against its SHA-256 when read. Null when empty.
+  var SPEC_DS_MAX = 30;
+  function specDatasheets(v) {
+    if (!Array.isArray(v)) return null;
+    var out = [];
+    v.forEach(function (d) {
+      if (out.length >= SPEC_DS_MAX || !d || typeof d !== 'object' || !/^[a-z0-9]{4,24}$/.test(d.id || '')) return;
+      var o = { id: d.id, name: String(d.name == null ? '' : d.name).slice(0, 200) };
+      if (typeof d.url === 'string' && /^https?:\/\/[^\s]+$/i.test(d.url) && d.url.length <= 2000) o.url = d.url;
+      else if (typeof d.file === 'string' && /^[a-z0-9]{4,24}\.pdf$/.test(d.file) && /^[0-9a-f]{64}$/.test(d.sha256 || '')) {
+        o.file = d.file; o.sha256 = d.sha256;
+        o.bytes = typeof d.bytes === 'number' && isFinite(d.bytes) && d.bytes > 0 ? Math.round(d.bytes) : 0;
+        var n = parseInt(d.parts, 10); if (n > 1 && n <= 100) o.parts = n;
+      } else return;
+      if (typeof d.by === 'string' && d.by) o.by = d.by.slice(0, 100);
+      if (typeof d.at === 'string' && d.at) o.at = d.at.slice(0, 40);
+      out.push(o);
+    });
+    return out.length ? out : null;
+  }
+  // A stored datasheet's paths under its folder, in order (one, or its parts).
+  function specDatasheetPaths(dir, d) {
+    if (!d || !d.file) return [];
+    if (!d.parts) return [dir + d.file];
+    var out = []; for (var k = 1; k <= d.parts; k++) out.push(dir + d.file + '.' + ('00' + k).slice(-3));
     return out;
   }
   function specColor(v) { return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : ''; }
@@ -2963,7 +2996,7 @@
     liveComments: liveComments, retiredItems: retiredItems, changesSince: changesSince, recordDiff: recordDiff, historyRows: historyRows, historyBlocks: historyBlocks,
     restorePlan: restorePlan, restoreApply: restoreApply,
     isRevNote: isRevNote, stripRevNote: stripRevNote, revNotes: revNotes,
-    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specLinkDir: specLinkDir, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specResolvePlan: specResolvePlan, specResolveApply: specResolveApply, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain, specRich: specRich, specRichPlain: specRichPlain, specListNumbers: specListNumbers, specRange: specRange, specOfferWords: specOfferWords, specPowerOn: specPowerOn, specPinsOn: specPinsOn, specPins: specPins, specPinPart: specPinPart, specMcuConns: specMcuConns, specPowerItems: specPowerItems, specPowerText: specPowerText, specPowerOf: specPowerOf, specRails: specRails, specRailDelete: specRailDelete, specPowerConvert: specPowerConvert, SPEC_LIST_MAX: SPEC_LIST_MAX,
+    specKinds: specKinds, specKindInfo: specKindInfo, specLinkWords: specLinkWords, specLinkWord: specLinkWord, specKindLink: specKindLink, specLinkItems: specLinkItems, specLinkText: specLinkText, specLinkDir: specLinkDir, specUsesItems: specUsesItems, specEnabled: specEnabled, liveSpec: liveSpec, newSection: newSection, specStamp: specStamp, mergeSpec: mergeSpec, specResolvePlan: specResolvePlan, specResolveApply: specResolveApply, specBase: specBase, specStampKey: specStampKey, specHeading: specHeading, specHeadingLine: specHeadingLine, specPlain: specPlain, specRich: specRich, specRichPlain: specRichPlain, specListNumbers: specListNumbers, specRange: specRange, specOfferWords: specOfferWords, specPowerOn: specPowerOn, specPinsOn: specPinsOn, specPins: specPins, specDatasheets: specDatasheets, specDatasheetPaths: specDatasheetPaths, specPinPart: specPinPart, specMcuConns: specMcuConns, specPowerItems: specPowerItems, specPowerText: specPowerText, specPowerOf: specPowerOf, specRails: specRails, specRailDelete: specRailDelete, specPowerConvert: specPowerConvert, SPEC_LIST_MAX: SPEC_LIST_MAX,
     specSpans: specSpans, specCells: specCells, specUseIs: specUseIs, specUseId: specUseId, specRemoveUnit: specRemoveUnit, specBrokenMarks: specBrokenMarks, SPEC_BODY_MAX: SPEC_BODY_MAX, specTooLong: specTooLong, specKindLabel: specKindLabel, specKindPlural: specKindPlural, specSentences: specSentences, specContext: specContext, specBlocks: specBlocks, specAnalysis: specAnalysis, specEdit: specEdit,
     specToEditor: specToEditor, specFromEditor: specFromEditor, specSplit: specSplit, specSave: specSave, specToText: specToText, specSaveAll: specSaveAll, specSetLine: specSetLine, specUsesNames: specUsesNames, specRenameUses: specRenameUses, specRename: specRename, specAddBlock: specAddBlock, specMoveBlock: specMoveBlock, specNest: specNest, specGroup: specGroup, specUngroup: specUngroup, specCommentTags: specCommentTags, specMarkdown: specMarkdown, specSummary: specSummary, specTemplate: specTemplate,
     newer: newer, mergeMaps: mergeMaps, mergeProjects: mergeProjects, mergeLocalCopies: mergeLocalCopies,

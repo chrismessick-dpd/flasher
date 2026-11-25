@@ -1938,6 +1938,8 @@ button.spec-pins-head { display: block; width: 100%; text-align: left; font: inh
 .pw-f .input { padding: 5px 8px; width: 70px; font-size: 12.5px; background: var(--bg-elev); }
 .pw-f .seg button { padding: 3px 8px; font-size: 12px; }
 .pw-f small { color: var(--text-3); }
+.pw-f select.pw-sel { width: auto; min-width: 120px; }
+.pw-f .pw-in:has(> .input:nth-of-type(3)) > .input { width: 58px; }   /* a battery's min, nominal, and max on one line */
 .pw-checks { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-2); }
 .pw-checks label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 .pw-checks input { margin: 0; }
@@ -2039,3 +2041,17 @@ table.pw-t { width: 100%; border-collapse: collapse; font-size: 13px; font-varia
 .spec-color-sw.on { box-shadow: 0 0 0 2px var(--text); }
 .spec-color-custom { position: relative; overflow: hidden; background: conic-gradient(#d64545, #e08a2c, #d4b100, #3f9a4a, #1f9e9a, #3a6fd8, #8a55c8, #d64545); }
 .spec-color-custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
+
+/* Scribe block panel: Datasheets, links and stored PDFs (2026-11-24). */
+.spec-ds-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 4px; }
+.spec-ds-list li { display: flex; align-items: center; gap: 4px; }
+.spec-ds-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--hair-2); border-radius: 8px; background: var(--bg-elev); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.spec-ds-open:hover { border-color: var(--accent); }
+.spec-ds-kind { flex: none; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--hair-2); color: var(--text-3); }
+.spec-ds-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spec-ds-size { flex: none; font-size: 12px; }
+.spec-ds-addlink { display: flex; gap: 6px; align-items: center; }
+.spec-ds-addlink .input { flex: 1; min-width: 0; }
+.spec-ds-addlink .btn { flex: none; }
+.spec-ds-pick { cursor: pointer; }
+.spec-ds-addlink.on .input { border-style: dashed; border-color: var(--accent); background: var(--accent-soft, var(--bg-elev)); }
